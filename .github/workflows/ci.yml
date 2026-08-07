@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Lint Swift sources
+        run: xcrun swift-format lint --configuration .swift-format --recursive Sources Tests Package.swift --strict
+
+      - name: Run unit tests
+        run: swift test --configuration debug
+
+      - name: Build signed app bundle
+        run: zsh ./scripts/build-app.sh

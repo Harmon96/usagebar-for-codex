@@ -13,7 +13,7 @@ private let persistedUsageSnapshotKey = "persistedUsageSnapshot"
 private let refreshPolicyPreferenceKey = "refreshPolicy"
 private let menuBarDisplayModePreferenceKey = "menuBarDisplayMode"
 
-//- 자동 갱신 간격 설정
+// 자동 갱신 간격 설정
 private enum RefreshPolicy: String, CaseIterable, Identifiable {
   case adaptive
   case oneMinute
@@ -33,7 +33,7 @@ private enum RefreshPolicy: String, CaseIterable, Identifiable {
     }
   }
 
-  //- 최근 사용량 변화 여부에 맞는 다음 갱신 간격 반환
+  // 최근 사용량 변화 여부에 맞는 다음 갱신 간격 반환
   func interval(usageChanged: Bool) -> TimeInterval {
     switch self {
     case .adaptive: return usageChanged ? 60 : 5 * 60
@@ -45,7 +45,7 @@ private enum RefreshPolicy: String, CaseIterable, Identifiable {
   }
 }
 
-//- 메뉴바에 표시할 정보 밀도 설정
+// 메뉴바에 표시할 정보 밀도 설정
 private enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
   case full
   case gaugeOnly
@@ -62,15 +62,15 @@ private enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
   }
 }
 
-//- Codex 앱 서버 응답의 사용량 창
-private struct RateLimitWindow: Decodable, Sendable {
+// Codex 앱 서버 응답의 사용량 창
+struct RateLimitWindow: Decodable, Sendable {
   let usedPercent: Int
   let windowDurationMins: Int?
   let resetsAt: Int?
 }
 
-//- Codex 앱 서버 응답의 사용량 요약
-private struct RateLimitSnapshot: Decodable, Sendable {
+// Codex 앱 서버 응답의 사용량 요약
+struct RateLimitSnapshot: Decodable, Sendable {
   let limitId: String?
   let limitName: String?
   let primary: RateLimitWindow?
@@ -79,50 +79,50 @@ private struct RateLimitSnapshot: Decodable, Sendable {
   let rateLimitReachedType: String?
 }
 
-//- Codex 사용량 전체 리셋 크레딧
-private struct RateLimitResetCredit: Decodable, Sendable {
+// Codex 사용량 전체 리셋 크레딧
+struct RateLimitResetCredit: Decodable, Sendable {
   let status: String
   let expiresAt: Int?
 }
 
-//- 사용 가능한 전체 리셋 크레딧 요약
-private struct RateLimitResetCredits: Decodable, Sendable {
+// 사용 가능한 전체 리셋 크레딧 요약
+struct RateLimitResetCredits: Decodable, Sendable {
   let availableCount: Int?
   let credits: [RateLimitResetCredit]?
 }
 
-//- Codex 앱 서버의 사용량 응답
-private struct RateLimitsResponse: Decodable, Sendable {
+// Codex 앱 서버의 사용량 응답
+struct RateLimitsResponse: Decodable, Sendable {
   let rateLimits: RateLimitSnapshot
   let rateLimitsByLimitId: [String: RateLimitSnapshot]?
   let rateLimitResetCredits: RateLimitResetCredits?
 }
 
-//- Codex 앱 서버 초기화 결과
-private struct InitializeResult: Decodable {
+// Codex 앱 서버 초기화 결과
+struct InitializeResult: Decodable {
   let userAgent: String?
 }
 
-//- JSON-RPC 초기화 응답 래퍼
-private struct InitializeResponse: Decodable {
+// JSON-RPC 초기화 응답 래퍼
+struct InitializeResponse: Decodable {
   let id: Int?
   let result: InitializeResult?
 }
 
-//- JSON-RPC 사용량 응답 래퍼
-private struct RateLimitResponseEnvelope: Decodable {
+// JSON-RPC 사용량 응답 래퍼
+struct RateLimitResponseEnvelope: Decodable {
   let id: Int?
   let result: RateLimitsResponse?
 }
 
-//- 필요할 때 메뉴에 표시할 모델별 제한
+// 필요할 때 메뉴에 표시할 모델별 제한
 private struct ModelSpecificLimit: Codable, Sendable {
   let name: String
   let remainingPercentage: Int
   let resetAt: Date?
 }
 
-//- 앱 재실행 시 복원할 마지막 정상 사용량
+// 앱 재실행 시 복원할 마지막 정상 사용량
 private struct PersistedUsageSnapshot: Codable {
   let remainingPercentage: Int
   let lastRefreshedAt: Date
@@ -135,7 +135,7 @@ private struct PersistedUsageSnapshot: Codable {
   let modelSpecificLimits: [ModelSpecificLimit]
 }
 
-//- 메뉴바에 반영할 Codex 사용량 스냅샷
+// 메뉴바에 반영할 Codex 사용량 스냅샷
 private struct CodexUsageSnapshot: Sendable {
   let weeklyWindow: RateLimitWindow
   let planType: String?
@@ -145,7 +145,91 @@ private struct CodexUsageSnapshot: Sendable {
   let modelSpecificLimits: [ModelSpecificLimit]
 }
 
-//- 앱 서버 stdout을 스레드 안전하게 수집하고 사용량 응답 도착을 알림
+// 프로세스 I/O와 분리해 테스트할 수 있는 app-server 응답 해석
+enum RateLimitParser {
+  static func parseAppServerResponse(
+    from outputData: Data
+  ) throws -> (rateLimits: RateLimitsResponse, cliVersion: String?) {
+    let decoder = JSONDecoder()
+    var cliVersion: String?
+    var rateLimitsResponse: RateLimitsResponse?
+    for responseData in outputData.split(separator: 0x0A) {
+      if let initializeResponse = try? decoder.decode(InitializeResponse.self, from: responseData),
+        initializeResponse.id == 1,
+        let userAgent = initializeResponse.result?.userAgent
+      {
+        cliVersion = parseCLIVersion(from: userAgent)
+      }
+
+      if let response = try? decoder.decode(RateLimitResponseEnvelope.self, from: responseData),
+        response.id == 2,
+        let responseResult = response.result
+      {
+        rateLimitsResponse = responseResult
+      }
+    }
+
+    guard let rateLimitsResponse else {
+      throw RateLimitFetchError.invalidResponse
+    }
+    return (rateLimitsResponse, cliVersion)
+  }
+
+  // 앱 서버 user agent에서 Codex CLI 버전 추출
+  static func parseCLIVersion(from userAgent: String) -> String? {
+    guard let firstComponent = userAgent.split(separator: " ").first,
+      let version = firstComponent.split(separator: "/").last,
+      version.first?.isNumber == true
+    else {
+      return nil
+    }
+    return String(version)
+  }
+
+  // 정확한 주간 창을 우선하고, 없으면 가장 긴 창으로 안전하게 대체
+  static func selectWeeklyWindow(from rateLimitSnapshot: RateLimitSnapshot) throws -> RateLimitWindow {
+    let availableWindows = [rateLimitSnapshot.primary, rateLimitSnapshot.secondary].compactMap { $0 }
+    if let weeklyWindow = availableWindows.first(where: { $0.windowDurationMins == weeklyWindowDurationMinutes }) {
+      return weeklyWindow
+    }
+
+    if let longestWindow = availableWindows.max(by: { ($0.windowDurationMins ?? 0) < ($1.windowDurationMins ?? 0) }) {
+      return longestWindow
+    }
+
+    throw RateLimitFetchError.weeklyRateLimitNotFound
+  }
+}
+
+// 주간 경과율과 실제 사용률을 비교하는 순수 계산 로직
+enum UsagePaceCalculator {
+  static func description(for weeklyWindow: RateLimitWindow, now: Date = Date()) -> String {
+    guard let resetsAt = weeklyWindow.resetsAt,
+      let windowDurationMins = weeklyWindow.windowDurationMins
+    else {
+      return "사용 속도 계산 불가"
+    }
+
+    let windowDuration = TimeInterval(windowDurationMins * 60)
+    let windowStart = Date(timeIntervalSince1970: TimeInterval(resetsAt)).addingTimeInterval(-windowDuration)
+    let elapsedDuration = now.timeIntervalSince(windowStart)
+    guard elapsedDuration >= 60 * 60, windowDuration > 0 else {
+      return "사용 속도 판단 중"
+    }
+
+    let elapsedPercent = max(0, min(100, elapsedDuration / windowDuration * 100))
+    let paceDifference = Double(weeklyWindow.usedPercent) - elapsedPercent
+    if paceDifference > 5 {
+      return "기준보다 빠름 · 사용 \(weeklyWindow.usedPercent)% / 경과 \(Int(elapsedPercent.rounded()))%"
+    }
+    if paceDifference < -5 {
+      return "여유 · 사용 \(weeklyWindow.usedPercent)% / 경과 \(Int(elapsedPercent.rounded()))%"
+    }
+    return "적정 · 사용 \(weeklyWindow.usedPercent)% / 경과 \(Int(elapsedPercent.rounded()))%"
+  }
+}
+
+// 앱 서버 stdout을 스레드 안전하게 수집하고 사용량 응답 도착을 알림
 private final class AppServerOutputBuffer: @unchecked Sendable {
   let rateLimitResponseReceived = DispatchSemaphore(value: 0)
 
@@ -168,11 +252,12 @@ private final class AppServerOutputBuffer: @unchecked Sendable {
     }
   }
 
-  //- JSON Lines를 구조적으로 해석해 사용량 응답 도착 여부 확인
+  // JSON Lines를 구조적으로 해석해 사용량 응답 도착 여부 확인
   private func containsRateLimitResponse(in responseData: Data) -> Bool {
     responseData.split(separator: 0x0A).contains { responseLine in
       guard let responseObject = try? JSONSerialization.jsonObject(with: Data(responseLine)) as? [String: Any],
-            let responseId = responseObject["id"] as? NSNumber else {
+        let responseId = responseObject["id"] as? NSNumber
+      else {
         return false
       }
       return responseId.intValue == 2
@@ -186,7 +271,7 @@ private final class AppServerOutputBuffer: @unchecked Sendable {
   }
 }
 
-//- Codex 앱 서버 사용량 조회 오류
+// Codex 앱 서버 사용량 조회 오류
 private enum RateLimitFetchError: LocalizedError, Sendable {
   case codexExecutableNotFound
   case appServerFailed
@@ -207,7 +292,7 @@ private enum RateLimitFetchError: LocalizedError, Sendable {
   }
 }
 
-//- 설치된 Codex 앱 서버에서 주간 사용량을 조회
+// 설치된 Codex 앱 서버에서 주간 사용량을 조회
 private enum CodexRateLimitClient {
   static func fetchWeeklyUsage() async -> Result<CodexUsageSnapshot, RateLimitFetchError> {
     await Task.detached(priority: .utility) {
@@ -221,7 +306,7 @@ private enum CodexRateLimitClient {
     }.value
   }
 
-  //- Codex 앱 서버 JSON-RPC 요청 실행
+  // Codex 앱 서버 JSON-RPC 요청 실행
   private static func readWeeklyUsage() throws -> CodexUsageSnapshot {
     let appServerProcess = Process()
     appServerProcess.executableURL = try resolveCodexExecutableURL()
@@ -264,34 +349,38 @@ private enum CodexRateLimitClient {
       throw RateLimitFetchError.appServerFailed
     }
 
-    let parsedResponse = try parseAppServerResponse(from: outputData)
-    let weeklyWindow = try selectWeeklyWindow(from: parsedResponse.rateLimits.rateLimits)
+    let parsedResponse = try RateLimitParser.parseAppServerResponse(from: outputData)
+    let weeklyWindow = try RateLimitParser.selectWeeklyWindow(from: parsedResponse.rateLimits.rateLimits)
     let resetCredits = parsedResponse.rateLimits.rateLimitResetCredits
-    let availableCredits = resetCredits?.credits?.filter {
-      $0.status == "available"
-    } ?? []
-    let modelSpecificLimits = parsedResponse.rateLimits.rateLimitsByLimitId?.compactMap {
-      limitId, rateLimitSnapshot -> ModelSpecificLimit? in
-      guard limitId != parsedResponse.rateLimits.rateLimits.limitId,
-            limitId != "codex",
-            let modelWindow = try? selectWeeklyWindow(from: rateLimitSnapshot),
-            modelWindow.usedPercent > 0 || rateLimitSnapshot.rateLimitReachedType != nil else {
-        return nil
-      }
+    let availableCredits =
+      resetCredits?.credits?.filter {
+        $0.status == "available"
+      } ?? []
+    let modelSpecificLimits =
+      parsedResponse.rateLimits.rateLimitsByLimitId?.compactMap {
+        limitId, rateLimitSnapshot -> ModelSpecificLimit? in
+        guard limitId != parsedResponse.rateLimits.rateLimits.limitId,
+          limitId != "codex",
+          let modelWindow = try? RateLimitParser.selectWeeklyWindow(from: rateLimitSnapshot),
+          modelWindow.usedPercent > 0 || rateLimitSnapshot.rateLimitReachedType != nil
+        else {
+          return nil
+        }
 
-      return ModelSpecificLimit(
-        name: rateLimitSnapshot.limitName ?? limitId,
-        remainingPercentage: max(0, min(100, 100 - modelWindow.usedPercent)),
-        resetAt: modelWindow.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
-      )
-    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } ?? []
+        return ModelSpecificLimit(
+          name: rateLimitSnapshot.limitName ?? limitId,
+          remainingPercentage: max(0, min(100, 100 - modelWindow.usedPercent)),
+          resetAt: modelWindow.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        )
+      }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } ?? []
 
     return CodexUsageSnapshot(
       weeklyWindow: weeklyWindow,
       planType: parsedResponse.rateLimits.rateLimits.planType,
       cliVersion: parsedResponse.cliVersion,
       availableResetCredits: max(availableCredits.count, resetCredits?.availableCount ?? 0),
-      nearestResetCreditExpiry: availableCredits
+      nearestResetCreditExpiry:
+        availableCredits
         .compactMap { $0.expiresAt }
         .min()
         .map { Date(timeIntervalSince1970: TimeInterval($0)) },
@@ -299,84 +388,34 @@ private enum CodexRateLimitClient {
     )
   }
 
-  //- Codex 앱 서버 초기화와 사용량 요청 생성
+  // Codex 앱 서버 초기화와 사용량 요청 생성
   private static func appServerRequests() -> Data {
     let initializeRequest = """
-    {"id":1,"method":"initialize","params":{"clientInfo":{"name":"UsageBar","version":"1.0.0"},"capabilities":null}}
-    """
+      {"id":1,"method":"initialize","params":{"clientInfo":{"name":"UsageBar","version":"1.0.0"},"capabilities":null}}
+      """
     let initializedNotification = """
-    {"method":"initialized"}
-    """
+      {"method":"initialized"}
+      """
     let rateLimitRequest = """
-    {"id":2,"method":"account/rateLimits/read","params":null}
-    """
+      {"id":2,"method":"account/rateLimits/read","params":null}
+      """
     return Data("\(initializeRequest)\n\(initializedNotification)\n\(rateLimitRequest)\n".utf8)
   }
 
-  //- JSON Lines 응답에서 사용량 요청 결과 추출
-  private static func parseAppServerResponse(
-    from outputData: Data
-  ) throws -> (rateLimits: RateLimitsResponse, cliVersion: String?) {
-    let decoder = JSONDecoder()
-    var cliVersion: String?
-    var rateLimitsResponse: RateLimitsResponse?
-    for responseData in outputData.split(separator: 0x0A) {
-      if let initializeResponse = try? decoder.decode(InitializeResponse.self, from: responseData),
-         initializeResponse.id == 1,
-         let userAgent = initializeResponse.result?.userAgent {
-        cliVersion = parseCLIVersion(from: userAgent)
-      }
-
-      if let response = try? decoder.decode(RateLimitResponseEnvelope.self, from: responseData),
-         response.id == 2,
-         let responseResult = response.result {
-        rateLimitsResponse = responseResult
-      }
-    }
-
-    guard let rateLimitsResponse else {
-      throw RateLimitFetchError.invalidResponse
-    }
-    return (rateLimitsResponse, cliVersion)
-  }
-
-  //- 앱 서버 user agent에서 Codex CLI 버전 추출
-  private static func parseCLIVersion(from userAgent: String) -> String? {
-    guard let firstComponent = userAgent.split(separator: " ").first,
-          let version = firstComponent.split(separator: "/").last,
-          version.first?.isNumber == true else {
-      return nil
-    }
-    return String(version)
-  }
-
-  //- 주간 길이의 사용량 창을 우선 선택
-  private static func selectWeeklyWindow(from rateLimitSnapshot: RateLimitSnapshot) throws -> RateLimitWindow {
-    let availableWindows = [rateLimitSnapshot.primary, rateLimitSnapshot.secondary].compactMap { $0 }
-    if let weeklyWindow = availableWindows.first(where: { $0.windowDurationMins == weeklyWindowDurationMinutes }) {
-      return weeklyWindow
-    }
-
-    if let longestWindow = availableWindows.max(by: { ($0.windowDurationMins ?? 0) < ($1.windowDurationMins ?? 0) }) {
-      return longestWindow
-    }
-
-    throw RateLimitFetchError.weeklyRateLimitNotFound
-  }
-
-  //- 일반 설치 경로와 현재 PATH에서 Codex CLI 확인
+  // 일반 설치 경로와 현재 PATH에서 Codex CLI 확인
   private static func resolveCodexExecutableURL() throws -> URL {
     let fileManager = FileManager.default
     let homeDirectory = fileManager.homeDirectoryForCurrentUser
     let pathCandidateURLs = (ProcessInfo.processInfo.environment["PATH"] ?? "")
       .split(separator: ":")
       .map { URL(fileURLWithPath: String($0), isDirectory: true).appending(path: "codex") }
-    let candidateURLs = [
-      homeDirectory.appending(path: ".hermes/node/bin/codex"),
-      homeDirectory.appending(path: ".local/bin/codex"),
-      URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
-      URL(fileURLWithPath: "/usr/local/bin/codex")
-    ] + pathCandidateURLs
+    let candidateURLs =
+      [
+        homeDirectory.appending(path: ".hermes/node/bin/codex"),
+        homeDirectory.appending(path: ".local/bin/codex"),
+        URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
+        URL(fileURLWithPath: "/usr/local/bin/codex"),
+      ] + pathCandidateURLs
 
     var visitedPaths = Set<String>()
     for candidateURL in candidateURLs {
@@ -392,7 +431,7 @@ private enum CodexRateLimitClient {
     throw RateLimitFetchError.codexExecutableNotFound
   }
 
-  //- Finder 실행 환경에서도 일반적인 Codex 설치 경로를 찾도록 PATH 구성
+  // Finder 실행 환경에서도 일반적인 Codex 설치 경로를 찾도록 PATH 구성
   private static func processEnvironment() -> [String: String] {
     let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
     var environment = ProcessInfo.processInfo.environment
@@ -401,7 +440,7 @@ private enum CodexRateLimitClient {
       "\(homeDirectory)/.hermes/node/bin",
       "\(homeDirectory)/.local/bin",
       "/opt/homebrew/bin",
-      "/usr/local/bin"
+      "/usr/local/bin",
     ]
     environment["PATH"] = (commonBinaryDirectories + [defaultPath]).joined(separator: ":")
     environment["HOME"] = homeDirectory
@@ -409,7 +448,7 @@ private enum CodexRateLimitClient {
   }
 }
 
-//- Codex 주간 잔여율을 메뉴바 상태로 관리
+// Codex 주간 잔여율을 메뉴바 상태로 관리
 @MainActor
 private final class UsageStore: ObservableObject {
   @Published private(set) var remainingPercentage: Int?
@@ -435,17 +474,19 @@ private final class UsageStore: ObservableObject {
 
   init() {
     let userDefaults = UserDefaults.standard
-    refreshPolicy = RefreshPolicy(
-      rawValue: userDefaults.string(forKey: refreshPolicyPreferenceKey) ?? ""
-    ) ?? .fiveMinutes
-    menuBarDisplayMode = MenuBarDisplayMode(
-      rawValue: userDefaults.string(forKey: menuBarDisplayModePreferenceKey) ?? ""
-    ) ?? .full
+    refreshPolicy =
+      RefreshPolicy(
+        rawValue: userDefaults.string(forKey: refreshPolicyPreferenceKey) ?? ""
+      ) ?? .fiveMinutes
+    menuBarDisplayMode =
+      MenuBarDisplayMode(
+        rawValue: userDefaults.string(forKey: menuBarDisplayModePreferenceKey) ?? ""
+      ) ?? .full
     restorePersistedSnapshot()
     refreshUsage()
   }
 
-  //- Codex 앱 서버에서 최신 주간 잔여율 조회
+  // Codex 앱 서버에서 최신 주간 잔여율 조회
   func refreshUsage() {
     guard !isRefreshing else {
       return
@@ -460,7 +501,7 @@ private final class UsageStore: ObservableObject {
 
       self.isRefreshing = false
       switch fetchResult {
-      case let .success(usageSnapshot):
+      case .success(let usageSnapshot):
         let weeklyWindow = usageSnapshot.weeklyWindow
         let remainingPercentage = max(0, min(100, 100 - weeklyWindow.usedPercent))
         let usageChanged = self.remainingPercentage != nil && self.remainingPercentage != remainingPercentage
@@ -470,7 +511,7 @@ private final class UsageStore: ObservableObject {
         self.remainingPercentage = remainingPercentage
         self.lastRefreshedAt = Date()
         self.resetAt = weeklyWindow.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
-        self.paceDescription = self.makePaceDescription(for: weeklyWindow)
+        self.paceDescription = UsagePaceCalculator.description(for: weeklyWindow)
         self.planType = usageSnapshot.planType
         self.cliVersion = usageSnapshot.cliVersion
         self.availableResetCredits = usageSnapshot.availableResetCredits
@@ -480,7 +521,7 @@ private final class UsageStore: ObservableObject {
         self.lastErrorMessage = nil
         self.persistCurrentSnapshot()
         self.scheduleNextRefresh(usageChanged: usageChanged)
-      case let .failure(error):
+      case .failure(let error):
         self.isStale = true
         self.lastErrorMessage = error.localizedDescription
         self.scheduleRetry()
@@ -488,7 +529,7 @@ private final class UsageStore: ObservableObject {
     }
   }
 
-  //- 메뉴를 열 때 최신성 기준을 넘긴 데이터인지 확인
+  // 메뉴를 열 때 최신성 기준을 넘긴 데이터인지 확인
   var shouldRefreshOnMenuOpen: Bool {
     guard !isRefreshing else {
       return false
@@ -499,32 +540,32 @@ private final class UsageStore: ObservableObject {
     return Date().timeIntervalSince(lastRefreshedAt) >= menuOpenRefreshThreshold
   }
 
-  //- 잠자기 복귀 시 기존 값을 보존한 채 즉시 재검증
+  // 잠자기 복귀 시 기존 값을 보존한 채 즉시 재검증
   func refreshAfterWake() {
     isStale = true
     refreshUsage()
   }
 
-  //- 사용자가 선택한 자동 갱신 정책 저장 및 적용
+  // 사용자가 선택한 자동 갱신 정책 저장 및 적용
   func setRefreshPolicy(_ refreshPolicy: RefreshPolicy) {
     self.refreshPolicy = refreshPolicy
     UserDefaults.standard.set(refreshPolicy.rawValue, forKey: refreshPolicyPreferenceKey)
     scheduleNextRefresh(usageChanged: false)
   }
 
-  //- 사용자가 선택한 메뉴바 표시 모드 저장
+  // 사용자가 선택한 메뉴바 표시 모드 저장
   func setMenuBarDisplayMode(_ menuBarDisplayMode: MenuBarDisplayMode) {
     self.menuBarDisplayMode = menuBarDisplayMode
     UserDefaults.standard.set(menuBarDisplayMode.rawValue, forKey: menuBarDisplayModePreferenceKey)
   }
 
-  //- 시스템 로그인 항목 상태를 상세 화면에 반영
+  // 시스템 로그인 항목 상태를 상세 화면에 반영
   func updateLaunchAtLoginState(enabled: Bool, requiresApproval: Bool) {
     launchAtLoginEnabled = enabled
     launchAtLoginRequiresApproval = requiresApproval
   }
 
-  //- 성공한 갱신 이후 선택한 정책으로 다음 조회 예약
+  // 성공한 갱신 이후 선택한 정책으로 다음 조회 예약
   private func scheduleNextRefresh(usageChanged: Bool) {
     refreshTimer?.invalidate()
     let nextRefreshInterval = refreshPolicy.interval(usageChanged: usageChanged)
@@ -535,7 +576,7 @@ private final class UsageStore: ObservableObject {
     }
   }
 
-  //- 일시적인 조회 실패에 지수형 간격으로 재시도 예약
+  // 일시적인 조회 실패에 지수형 간격으로 재시도 예약
   private func scheduleRetry() {
     guard retryTimer == nil else {
       return
@@ -550,7 +591,7 @@ private final class UsageStore: ObservableObject {
     }
   }
 
-  //- 마지막 정상 사용량을 앱 재실행용 캐시에 저장
+  // 마지막 정상 사용량을 앱 재실행용 캐시에 저장
   private func persistCurrentSnapshot() {
     guard let remainingPercentage, let lastRefreshedAt else {
       return
@@ -572,10 +613,11 @@ private final class UsageStore: ObservableObject {
     UserDefaults.standard.set(snapshotData, forKey: persistedUsageSnapshotKey)
   }
 
-  //- 앱 시작 시 마지막 정상 사용량을 stale 상태로 복원
+  // 앱 시작 시 마지막 정상 사용량을 stale 상태로 복원
   private func restorePersistedSnapshot() {
     guard let snapshotData = UserDefaults.standard.data(forKey: persistedUsageSnapshotKey),
-          let persistedSnapshot = try? JSONDecoder().decode(PersistedUsageSnapshot.self, from: snapshotData) else {
+      let persistedSnapshot = try? JSONDecoder().decode(PersistedUsageSnapshot.self, from: snapshotData)
+    else {
       return
     }
     remainingPercentage = persistedSnapshot.remainingPercentage
@@ -590,34 +632,9 @@ private final class UsageStore: ObservableObject {
     isStale = true
   }
 
-  //- 주간 경과율과 실제 사용률을 비교해 소비 속도 문구 생성
-  private func makePaceDescription(for weeklyWindow: RateLimitWindow) -> String {
-    guard let resetsAt = weeklyWindow.resetsAt,
-          let windowDurationMins = weeklyWindow.windowDurationMins else {
-      return "사용 속도 계산 불가"
-    }
-
-    let windowDuration = TimeInterval(windowDurationMins * 60)
-    let windowStart = Date(timeIntervalSince1970: TimeInterval(resetsAt)).addingTimeInterval(-windowDuration)
-    let elapsedDuration = Date().timeIntervalSince(windowStart)
-    guard elapsedDuration >= 60 * 60, windowDuration > 0 else {
-      return "사용 속도 판단 중"
-    }
-
-    let elapsedPercent = max(0, min(100, elapsedDuration / windowDuration * 100))
-    let paceDifference = Double(weeklyWindow.usedPercent) - elapsedPercent
-    if paceDifference > 5 {
-      return "기준보다 빠름 · 사용 \(weeklyWindow.usedPercent)% / 경과 \(Int(elapsedPercent.rounded()))%"
-    }
-    if paceDifference < -5 {
-      return "여유 · 사용 \(weeklyWindow.usedPercent)% / 경과 \(Int(elapsedPercent.rounded()))%"
-    }
-    return "적정 · 사용 \(weeklyWindow.usedPercent)% / 경과 \(Int(elapsedPercent.rounded()))%"
-  }
-
 }
 
-//- 메뉴바 버튼에 표시할 중립적인 사용량 게이지 생성
+// 메뉴바 버튼에 표시할 중립적인 사용량 게이지 생성
 @MainActor
 private enum StatusGaugeImage {
   static func make(remainingPercentage: Int?, isStale: Bool) -> NSImage {
@@ -628,7 +645,7 @@ private enum StatusGaugeImage {
     )
   }
 
-  //- 앱 마크와 프리즘 글라스 프레임을 결합한 정적 게이지 생성
+  // 앱 마크와 프리즘 글라스 프레임을 결합한 정적 게이지 생성
   private static func makeUsageRail(
     remainingPercentage: Int?,
     isStale: Bool,
@@ -638,7 +655,7 @@ private enum StatusGaugeImage {
     let image = NSImage(size: imageSize, flipped: false) { drawingRect in
       let accentGradientColors = [
         NSColor(calibratedRed: 0.68, green: 0.24, blue: 1, alpha: 1),
-        NSColor(calibratedRed: 0.1, green: 0.63, blue: 1, alpha: 1)
+        NSColor(calibratedRed: 0.1, green: 0.63, blue: 1, alpha: 1),
       ]
       let coreRect = NSRect(x: 0.5, y: 0.5, width: 17, height: 17)
       let innerCoreRect = coreRect.insetBy(dx: 1.25, dy: 1.25)
@@ -654,7 +671,8 @@ private enum StatusGaugeImage {
       drawUsageMark(in: NSRect(x: 2.9, y: 2.9, width: 12.2, height: 12.2), color: iconColor)
 
       let connectorPath = NSBezierPath(ovalIn: NSRect(x: 19.1, y: drawingRect.midY - 1.3, width: 2.6, height: 2.6))
-      let connectorColors = isStale
+      let connectorColors =
+        isStale
         ? [NSColor.systemOrange.withAlphaComponent(0.92), NSColor.systemYellow.withAlphaComponent(0.82)]
         : accentGradientColors.map { $0.withAlphaComponent(0.72) }
       NSGradient(colors: connectorColors)?.draw(in: connectorPath, angle: 0)
@@ -706,7 +724,7 @@ private enum StatusGaugeImage {
           colors: [
             NSColor.white.withAlphaComponent(0.25),
             NSColor.clear,
-            NSColor.black.withAlphaComponent(0.2)
+            NSColor.black.withAlphaComponent(0.2),
           ]
         )?.draw(
           from: NSPoint(x: drawingRect.midX, y: innerRect.maxY),
@@ -775,13 +793,15 @@ private enum StatusGaugeImage {
     return image
   }
 
-  //- Apple SF Symbol로 중립적인 사용량 마크 렌더링
+  // Apple SF Symbol로 중립적인 사용량 마크 렌더링
   private static func drawUsageMark(in iconRect: NSRect, color: NSColor) {
     let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-    guard let symbolImage = NSImage(
-      systemSymbolName: "gauge.with.dots.needle.50percent",
-      accessibilityDescription: nil
-    )?.withSymbolConfiguration(symbolConfiguration) else {
+    guard
+      let symbolImage = NSImage(
+        systemSymbolName: "gauge.with.dots.needle.50percent",
+        accessibilityDescription: nil
+      )?.withSymbolConfiguration(symbolConfiguration)
+    else {
       return
     }
 
@@ -794,7 +814,7 @@ private enum StatusGaugeImage {
     tintedSymbolImage.draw(in: iconRect)
   }
 
-  //- 잔여율에 맞는 게이지 그라데이션 반환
+  // 잔여율에 맞는 게이지 그라데이션 반환
   private static func gradientColors(for remainingPercentage: Int) -> [NSColor] {
     if remainingPercentage <= 20 {
       return [.systemOrange, .systemRed]
@@ -804,12 +824,12 @@ private enum StatusGaugeImage {
       NSColor(calibratedRed: 0.68, green: 0.24, blue: 1, alpha: 1),
       NSColor(calibratedRed: 0.2, green: 0.43, blue: 1, alpha: 1),
       NSColor(calibratedRed: 0.03, green: 0.78, blue: 1, alpha: 1),
-      NSColor(calibratedRed: 0.18, green: 1, blue: 0.68, alpha: 1)
+      NSColor(calibratedRed: 0.18, green: 1, blue: 0.68, alpha: 1),
     ]
   }
 }
 
-//- 주간 잔여율을 정적인 프리즘 바 형태로 표시
+// 주간 잔여율을 정적인 프리즘 바 형태로 표시
 private struct WeeklyUsageGauge: View {
   let remainingPercentage: Int?
 
@@ -821,7 +841,7 @@ private struct WeeklyUsageGauge: View {
       Color(red: 0.68, green: 0.24, blue: 1),
       Color(red: 0.20, green: 0.43, blue: 1),
       Color(red: 0.03, green: 0.78, blue: 1),
-      Color(red: 0.18, green: 1, blue: 0.68)
+      Color(red: 0.18, green: 1, blue: 0.68),
     ]
   }
 
@@ -853,7 +873,7 @@ private struct WeeklyUsageGauge: View {
   }
 }
 
-//- reset과 pace 정보를 동일한 시각 위계의 카드로 표시
+// reset과 pace 정보를 동일한 시각 위계의 카드로 표시
 private struct UsageMetricCard: View {
   let title: String
   let value: String
@@ -884,7 +904,7 @@ private struct UsageMetricCard: View {
   }
 }
 
-//- Codex 사용량과 설정을 보여주는 compact popover
+// Codex 사용량과 설정을 보여주는 compact popover
 @MainActor
 private struct UsagePopoverView: View {
   @ObservedObject var usageStore: UsageStore
@@ -1142,7 +1162,7 @@ private struct UsagePopoverView: View {
     )
   }
 
-  //- 날짜를 현재 시간대의 명확한 시각으로 표시
+  // 날짜를 현재 시간대의 명확한 시각으로 표시
   private func formatDate(_ date: Date) -> String {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "ko_KR")
@@ -1151,7 +1171,7 @@ private struct UsagePopoverView: View {
     return formatter.string(from: date)
   }
 
-  //- 마지막 정상 갱신 시각 문구 생성
+  // 마지막 정상 갱신 시각 문구 생성
   private func lastRefreshDescription() -> String {
     guard let lastRefreshedAt = usageStore.lastRefreshedAt else {
       return "마지막 갱신 확인 중"
@@ -1165,7 +1185,7 @@ private struct UsagePopoverView: View {
 
 }
 
-//- 앱 실행과 메뉴바 상태 항목을 관리
+// 앱 실행과 메뉴바 상태 항목을 관리
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private let usageStore = UsageStore()
@@ -1189,7 +1209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     appearanceObservation?.invalidate()
   }
 
-  //- 게이지와 숫자가 포함된 메뉴바 항목 구성
+  // 게이지와 숫자가 포함된 메뉴바 항목 구성
   private func configureStatusItem() {
     statusItem.autosaveName = "CodexUsageMenuBarStatusItem"
     guard let statusButton = statusItem.button else {
@@ -1208,7 +1228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     statusItem.isVisible = true
   }
 
-  //- 사용량 상세 화면을 정적인 compact popover로 구성
+  // 사용량 상세 화면을 정적인 compact popover로 구성
   private func configurePopover() {
     usagePopover.behavior = .transient
     usagePopover.animates = false
@@ -1223,25 +1243,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
   }
 
-
-  //- 사용량 변경을 메뉴바 게이지에 반영
+  // 사용량 변경을 메뉴바 게이지에 반영
   private func observeUsageStore() {
     gaugeStateCancellable = Publishers.CombineLatest3(
       usageStore.$remainingPercentage,
       usageStore.$isStale,
       usageStore.$menuBarDisplayMode
     )
-      .receive(on: RunLoop.main)
-      .sink { [weak self] remainingPercentage, isStale, displayMode in
-        self?.updateStatusItem(
-          remainingPercentage: remainingPercentage,
-          isStale: isStale,
-          displayMode: displayMode
-        )
-      }
+    .receive(on: RunLoop.main)
+    .sink { [weak self] remainingPercentage, isStale, displayMode in
+      self?.updateStatusItem(
+        remainingPercentage: remainingPercentage,
+        isStale: isStale,
+        displayMode: displayMode
+      )
+    }
   }
 
-  //- 게이지 이미지와 오른쪽 잔여율 숫자 갱신
+  // 게이지 이미지와 오른쪽 잔여율 숫자 갱신
   private func updateStatusItem(
     remainingPercentage: Int?,
     isStale: Bool,
@@ -1285,7 +1304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     statusButton.setAccessibilityLabel("Codex 주간 잔여 사용률 \(percentageText)\(staleDescription)")
   }
 
-  //- 잔여율 숫자와 퍼센트 기호의 위계를 분리한 메뉴바 타이포 생성
+  // 잔여율 숫자와 퍼센트 기호의 위계를 분리한 메뉴바 타이포 생성
   private func makePercentageTitle(
     remainingPercentage: Int?,
     foregroundColor: NSColor
@@ -1301,7 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         attributes: [
           .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold),
           .foregroundColor: foregroundColor,
-          .shadow: textShadow
+          .shadow: textShadow,
         ]
       )
     }
@@ -1312,7 +1331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold),
         .foregroundColor: foregroundColor,
         .kern: 0.1,
-        .shadow: textShadow
+        .shadow: textShadow,
       ]
     )
     percentageTitle.append(
@@ -1322,14 +1341,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
           .foregroundColor: foregroundColor.withAlphaComponent(0.92),
           .baselineOffset: 1,
-          .shadow: textShadow
+          .shadow: textShadow,
         ]
       )
     )
     return percentageTitle
   }
 
-  //- 잠자기·디스플레이·appearance 변경을 받아 상태 항목 갱신
+  // 잠자기·디스플레이·appearance 변경을 받아 상태 항목 갱신
   private func configureSystemObservers() {
     NSWorkspace.shared.notificationCenter.addObserver(
       self,
@@ -1350,7 +1369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  //- 메뉴바 클릭 시 사용량 상세 popover 표시 전환
+  // 메뉴바 클릭 시 사용량 상세 popover 표시 전환
   @objc private func handleStatusItemClick() {
     guard let statusButton = statusItem.button else {
       return
@@ -1366,12 +1385,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     usagePopover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
   }
 
-  //- 잠자기 복귀 후 마지막 값을 stale로 표시하고 즉시 갱신
+  // 잠자기 복귀 후 마지막 값을 stale로 표시하고 즉시 갱신
   @objc private func handleDidWake() {
     usageStore.refreshAfterWake()
   }
 
-  //- 디스플레이 재구성 후 메뉴바 항목 가시성 복구
+  // 디스플레이 재구성 후 메뉴바 항목 가시성 복구
   @objc private func handleScreenParametersChanged() {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
       guard let self else {
@@ -1382,7 +1401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  //- 현재 appearance에서 메뉴바 게이지 다시 렌더링
+  // 현재 appearance에서 메뉴바 게이지 다시 렌더링
   private func redrawStatusItem() {
     updateStatusItem(
       remainingPercentage: usageStore.remainingPercentage,
@@ -1391,7 +1410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
   }
 
-  //- 시스템 로그인 자동 실행 등록 상태 전환
+  // 시스템 로그인 자동 실행 등록 상태 전환
   private func toggleLaunchAtLogin() {
     do {
       if SMAppService.mainApp.status == .enabled {
@@ -1405,7 +1424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     updateLaunchAtLoginState()
   }
 
-  //- 시스템 등록 상태와 승인 필요 여부를 상세 화면에 반영
+  // 시스템 등록 상태와 승인 필요 여부를 상세 화면에 반영
   private func updateLaunchAtLoginState() {
     let launchStatus = SMAppService.mainApp.status
     usageStore.updateLaunchAtLoginState(
