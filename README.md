@@ -5,6 +5,9 @@
 ![Swift 6.2+](https://img.shields.io/badge/Swift-6.2%2B-F05138?logo=swift&logoColor=white)
 [![MIT License](https://img.shields.io/github/license/Harmon96/usagebar-for-codex)](./LICENSE)
 
+![UsageBar 메뉴바 뷰](./image.png)
+![UsageBar 상세 화면](./image-1.png)
+
 UsageBar는 설치된 Codex CLI의 주간 잔여 사용률을 macOS 메뉴바에 표시하는 경량 네이티브 앱입니다. 작업 흐름을 끊고 사용량 페이지를 열지 않아도 게이지, 잔여 퍼센트, 리셋 시각과 사용 속도를 바로 확인할 수 있습니다.
 
 > [!IMPORTANT]
