@@ -7,11 +7,28 @@ import SwiftUI
 private let menuOpenRefreshThreshold: TimeInterval = 60
 private let weeklyWindowDurationMinutes = 7 * 24 * 60
 private let appServerRequestTimeout: TimeInterval = 15
-private let retryIntervals: [TimeInterval] = [30, 2 * 60, 5 * 60]
 private let usageDashboardURL = URL(string: "https://chatgpt.com/codex/settings/usage")!
 private let persistedUsageSnapshotKey = "persistedUsageSnapshot"
 private let refreshPolicyPreferenceKey = "refreshPolicy"
 private let menuBarDisplayModePreferenceKey = "menuBarDisplayMode"
+
+// 연속 실패 횟수에 맞는 재시도 간격을 계산하고 성공 시 초기화
+struct RetryBackoffPolicy {
+  private static let intervals: [TimeInterval] = [30, 2 * 60, 5 * 60]
+  private var attempt = 0
+
+  init() {}
+
+  mutating func nextInterval() -> TimeInterval {
+    let intervalIndex = min(attempt, Self.intervals.count - 1)
+    attempt = min(attempt + 1, Self.intervals.count - 1)
+    return Self.intervals[intervalIndex]
+  }
+
+  mutating func reset() {
+    attempt = 0
+  }
+}
 
 // 자동 갱신 간격 설정
 private enum RefreshPolicy: String, CaseIterable, Identifiable {
@@ -470,7 +487,7 @@ private final class UsageStore: ObservableObject {
 
   private var refreshTimer: Timer?
   private var retryTimer: Timer?
-  private var retryAttempt = 0
+  private var retryBackoffPolicy = RetryBackoffPolicy()
 
   init() {
     let userDefaults = UserDefaults.standard
@@ -507,7 +524,7 @@ private final class UsageStore: ObservableObject {
         let usageChanged = self.remainingPercentage != nil && self.remainingPercentage != remainingPercentage
         self.retryTimer?.invalidate()
         self.retryTimer = nil
-        self.retryAttempt = 0
+        self.retryBackoffPolicy.reset()
         self.remainingPercentage = remainingPercentage
         self.lastRefreshedAt = Date()
         self.resetAt = weeklyWindow.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
@@ -576,13 +593,12 @@ private final class UsageStore: ObservableObject {
     }
   }
 
-  // 일시적인 조회 실패에 지수형 간격으로 재시도 예약
+  // 일시적인 조회 실패에 단계형 간격으로 재시도 예약
   private func scheduleRetry() {
     guard retryTimer == nil else {
       return
     }
-    let retryInterval = retryIntervals[min(retryAttempt, retryIntervals.count - 1)]
-    retryAttempt += 1
+    let retryInterval = retryBackoffPolicy.nextInterval()
     retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: false) { [weak self] _ in
       Task { @MainActor in
         self?.retryTimer = nil
