@@ -22,7 +22,7 @@ struct RateLimitParserTests {
   }
 
   @Test("The exact seven-day window is preferred")
-  func selectWeeklyWindowPrefersExactSevenDayWindow() throws {
+  func selectUsageWindowPrefersExactSevenDayWindow() throws {
     let shortWindow = RateLimitWindow(
       usedPercent: 18,
       windowDurationMins: 300,
@@ -42,14 +42,14 @@ struct RateLimitParserTests {
       rateLimitReachedType: nil
     )
 
-    let selectedWindow = try RateLimitParser.selectWeeklyWindow(from: snapshot)
+    let selectedWindow = try RateLimitParser.selectUsageWindow(from: snapshot)
 
     #expect(selectedWindow.usedPercent == 43)
     #expect(selectedWindow.windowDurationMins == 10_080)
   }
 
   @Test("The longest available window is used as a compatibility fallback")
-  func selectWeeklyWindowFallsBackToLongestAvailableWindow() throws {
+  func selectUsageWindowFallsBackToLongestAvailableWindow() throws {
     let snapshot = RateLimitSnapshot(
       limitId: "custom",
       limitName: "Custom",
@@ -59,9 +59,122 @@ struct RateLimitParserTests {
       rateLimitReachedType: nil
     )
 
-    let selectedWindow = try RateLimitParser.selectWeeklyWindow(from: snapshot)
+    let selectedWindow = try RateLimitParser.selectUsageWindow(from: snapshot)
 
     #expect(selectedWindow.windowDurationMins == 180)
+  }
+
+  @Test("Weekly selection is independent of primary and secondary positions")
+  func selectsWeeklyWindowInPrimaryPosition() throws {
+    let selected = try RateLimitParser.selectUsageWindow(
+      from: snapshot(primary: window(used: 42, minutes: 10_080), secondary: window(used: 90, minutes: 20_160))
+    )
+
+    #expect(selected.usedPercent == 42)
+    #expect(selected.windowDurationMins == 10_080)
+  }
+
+  @Test("A five-hour-only response retains its real duration")
+  func selectsSingleShortWindow() throws {
+    let selected = try RateLimitParser.selectUsageWindow(
+      from: snapshot(primary: window(used: 72, minutes: 300))
+    )
+
+    #expect(selected.usedPercent == 72)
+    #expect(selected.windowDurationMins == 300)
+  }
+
+  @Test("Missing, zero, negative, and absent durations cannot become weekly data")
+  func rejectsUnknownOrInvalidDurations() {
+    for duration: Int? in [nil, 0, -300] {
+      #expect(throws: (any Error).self) {
+        try RateLimitParser.selectUsageWindow(
+          from: snapshot(primary: window(used: 15, minutes: duration))
+        )
+      }
+    }
+    #expect(throws: (any Error).self) {
+      try RateLimitParser.selectUsageWindow(from: snapshot())
+    }
+  }
+
+  @Test("A valid short window is selected over an unknown-duration window")
+  func ignoresUnknownDurationWhenValidWindowExists() throws {
+    let selected = try RateLimitParser.selectUsageWindow(
+      from: snapshot(primary: window(used: 80, minutes: nil), secondary: window(used: 10, minutes: 300))
+    )
+
+    #expect(selected.windowDurationMins == 300)
+    #expect(selected.usedPercent == 10)
+  }
+
+  @Test("Model limits expose the exhausted window even when the other window is unused")
+  func modelsUseMostConsumedWindow() throws {
+    let response = RateLimitsResponse(
+      rateLimits: snapshot(),
+      rateLimitsByLimitId: [
+        "short": snapshot(primary: window(used: 100, minutes: 300), secondary: window(used: 0, minutes: 10_080)),
+        "weekly": snapshot(primary: window(used: 0, minutes: 300), secondary: window(used: 75, minutes: 10_080)),
+      ],
+      rateLimitResetCredits: nil
+    )
+
+    let models = RateLimitParser.modelSpecificLimits(from: response)
+    let short = try #require(models.first { $0.id == "short" })
+    let weekly = try #require(models.first { $0.id == "weekly" })
+    #expect(short.remainingPercentage == 0)
+    #expect(short.windowDurationMins == 300)
+    #expect(short.resetAt == Date(timeIntervalSince1970: 1_800_000_300))
+    #expect(weekly.remainingPercentage == 25)
+    #expect(weekly.windowDurationMins == 10_080)
+  }
+
+  @Test("Model ties prefer the longer window and single-window limits are supported")
+  func modelTiesAndSingleWindows() throws {
+    let response = RateLimitsResponse(
+      rateLimits: snapshot(),
+      rateLimitsByLimitId: [
+        "tie": snapshot(primary: window(used: 45, minutes: 10_080), secondary: window(used: 45, minutes: 300)),
+        "single": snapshot(secondary: window(used: 20, minutes: 300)),
+      ],
+      rateLimitResetCredits: nil
+    )
+
+    let models = RateLimitParser.modelSpecificLimits(from: response)
+    #expect(try #require(models.first { $0.id == "tie" }).windowDurationMins == 10_080)
+    #expect(try #require(models.first { $0.id == "single" }).remainingPercentage == 80)
+  }
+
+  @Test("Base and unused models stay hidden while a reached limit remains visible")
+  func filtersBaseAndUnusedModels() {
+    let response = RateLimitsResponse(
+      rateLimits: snapshot(id: "base"),
+      rateLimitsByLimitId: [
+        "codex": snapshot(primary: window(used: 80, minutes: 300)),
+        "base": snapshot(primary: window(used: 80, minutes: 300)),
+        "unused": snapshot(primary: window(used: 0, minutes: 300)),
+        "reached": snapshot(primary: window(used: 0, minutes: 300), reached: "primary"),
+      ],
+      rateLimitResetCredits: nil
+    )
+
+    #expect(RateLimitParser.modelSpecificLimits(from: response).map(\.id) == ["reached"])
+  }
+
+  private func window(used: Int, minutes: Int?) -> RateLimitWindow {
+    RateLimitWindow(usedPercent: used, windowDurationMins: minutes, resetsAt: 1_800_000_300)
+  }
+
+  private func snapshot(
+    id: String = "codex",
+    primary: RateLimitWindow? = nil,
+    secondary: RateLimitWindow? = nil,
+    reached: String? = nil
+  ) -> RateLimitSnapshot {
+    RateLimitSnapshot(
+      limitId: id, limitName: nil, primary: primary, secondary: secondary,
+      planType: nil, rateLimitReachedType: reached
+    )
   }
 
   @Test("Pace uses deterministic window progress")
