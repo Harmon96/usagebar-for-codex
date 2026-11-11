@@ -33,6 +33,14 @@ Codex를 장시간 사용할 때는 “얼마나 남았는지”뿐 아니라 �
 - 사용자가 명시적으로 켠 경우에만 macOS 로그인 항목 등록
 - 라이트/다크 모드와 디스플레이 구성 변경에 맞춰 메뉴바 항목 다시 렌더링
 
+## 사용 기록과 그래프
+
+메뉴바 팝오버에 바로 표시되는 그래프에서 `1h`, `6h`, `1d`, `7d`, `30d` 기간을 선택합니다. 시간대별 일반 입력·캐시 입력·출력 토큰 그래프와 모델별 사용 기록, 입력·출력 및 추론 강도별 토큰 합계를 볼 수 있습니다.
+
+메뉴바 팝오버를 열 때 이 Mac의 `~/.codex/sessions`와 `~/.codex/archived_sessions` JSONL 기록을 읽습니다. 원본 대화 내용은 보관하거나 전송하지 않습니다. 응답 ID가 있는 사용 기록은 중복을 제거하며, 이전 형식은 누적 카운터 차이로 복원합니다. 따라서 기록 수는 질문 수와 다릅니다. 캐시 입력은 입력에, 추론 출력은 출력에 포함되며 전체 합계에 다시 더하지 않습니다.
+
+다른 기기·삭제된 기록·압축된 `.zst` 기록은 포함되지 않습니다. 읽지 못한 파일 수는 화면에 안내합니다. 기록이 없는 기간은 실제 사용량 0을 뜻하지 않으며, 토큰 합계는 구독 잔여율이나 실제 청구액과 별개입니다.
+
 ## 기술적 특징
 
 | 영역 | 구현 |
@@ -119,7 +127,7 @@ GitHub Actions는 macOS runner에서 형식 검사, 단위 테스트와 실제 `
 .
 ├── .github/workflows/ci.yml           # macOS CI
 ├── Resources/Info.plist               # 앱 번들 메타데이터
-├── Sources/CodexUsageMenuBar/main.swift
+├── Sources/CodexUsageMenuBar/CodexUsageMenuBarApp.swift
 ├── Tests/CodexUsageMenuBarTests/      # 파싱·계산 회귀 테스트
 ├── scripts/build-app.sh               # 릴리스 앱 번들 생성·서명·검증
 ├── Package.swift

@@ -994,6 +994,7 @@ private struct UsageMetricCard: View {
 @MainActor
 private struct UsagePopoverView: View {
   @ObservedObject var usageStore: UsageStore
+  @StateObject private var analyticsStore = UsageAnalyticsStore()
   let onToggleLaunchAtLogin: () -> Void
   let onOpenDashboard: () -> Void
   let onQuit: () -> Void
@@ -1038,6 +1039,10 @@ private struct UsagePopoverView: View {
       if usageStore.availableResetCredits > 0 || !usageStore.modelSpecificLimits.isEmpty {
         supplementalUsage
       }
+
+      UsageAnalyticsView(store: analyticsStore, compact: true)
+        .frame(height: 340)
+        .task { await analyticsStore.refresh() }
 
       statusFooter
       Divider().opacity(0.55)
@@ -1328,7 +1333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func configurePopover() {
     usagePopover.behavior = .transient
     usagePopover.animates = false
-    usagePopover.contentSize = NSSize(width: 344, height: 520)
+    usagePopover.contentSize = NSSize(width: 344, height: 820)
     usagePopover.contentViewController = NSHostingController(
       rootView: UsagePopoverView(
         usageStore: usageStore,
