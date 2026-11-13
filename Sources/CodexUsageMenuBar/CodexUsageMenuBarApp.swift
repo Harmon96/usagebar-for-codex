@@ -934,10 +934,14 @@ private enum StatusGaugeImage {
 private struct UsageGauge: View {
   let remainingPercentage: Int?
   let period: String
+  var customColor: Color? = nil
 
   private var gaugeColors: [Color] {
     if let remainingPercentage, remainingPercentage <= 20 {
       return [.orange, .red]
+    }
+    if let customColor {
+      return [customColor.opacity(0.5), customColor.opacity(0.8), customColor]
     }
     return [
       Color(red: 0.68, green: 0.24, blue: 1),
@@ -1011,6 +1015,8 @@ private struct UsageMetricCard: View {
 private struct UsagePopoverView: View {
   @ObservedObject var usageStore: UsageStore
   @StateObject private var analyticsStore = UsageAnalyticsStore()
+  @AppStorage("usageGaugeColorHex") private var gaugeColorHex = ""
+  @State private var showingColorEditor = false
   let onToggleLaunchAtLogin: () -> Void
   let onOpenDashboard: () -> Void
   let onQuit: () -> Void
@@ -1098,9 +1104,27 @@ private struct UsagePopoverView: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline) {
         VStack(alignment: .leading, spacing: 2) {
-          Text(usageStore.windowPresentation.remainingTitle)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
+          HStack(spacing: 5) {
+            Text(usageStore.windowPresentation.remainingTitle)
+              .font(.system(size: 10, weight: .semibold))
+              .foregroundStyle(.secondary)
+            Button {
+              showingColorEditor.toggle()
+            } label: {
+              Circle()
+                .fill(GaugeColor.color(hex: gaugeColorHex) ?? .purple)
+                .overlay(Circle().stroke(Color.primary.opacity(0.2), lineWidth: 1))
+                .frame(width: 12, height: 12)
+                .padding(3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("진행 막대 색상 변경")
+            .help("진행 막대 색상 변경")
+            .popover(isPresented: $showingColorEditor, arrowEdge: .trailing) {
+              GaugeColorEditor(hex: $gaugeColorHex)
+            }
+          }
           HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text(usageStore.remainingPercentage.map(String.init) ?? "—")
               .font(.system(size: 38, weight: .bold, design: .rounded))
@@ -1112,7 +1136,11 @@ private struct UsagePopoverView: View {
         Spacer()
         staleBadge
       }
-      UsageGauge(remainingPercentage: usageStore.remainingPercentage, period: usageStore.windowPresentation.period)
+      UsageGauge(
+        remainingPercentage: usageStore.remainingPercentage,
+        period: usageStore.windowPresentation.period,
+        customColor: GaugeColor.color(hex: gaugeColorHex)
+      )
     }
     .padding(14)
     .background(
@@ -1150,7 +1178,10 @@ private struct UsagePopoverView: View {
     case .live:
       Label("LIVE", systemImage: "checkmark.circle.fill")
         .font(.system(size: 9, weight: .bold))
-        .foregroundStyle(.mint)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Color(red: 0.08, green: 0.38, blue: 0.28)))
     }
   }
 
