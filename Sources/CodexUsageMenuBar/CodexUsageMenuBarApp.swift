@@ -878,25 +878,41 @@ private enum StatusGaugeImage {
     return image
   }
 
-  // Apple SF Symbol로 중립적인 사용량 마크 렌더링
+  // 심볼의 이미지 여백 없이 프레임 중심에 게이지 마크를 직접 그린다.
   private static func drawUsageMark(in iconRect: NSRect, color: NSColor) {
-    let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-    guard
-      let symbolImage = NSImage(
-        systemSymbolName: "gauge.with.dots.needle.50percent",
-        accessibilityDescription: nil
-      )?.withSymbolConfiguration(symbolConfiguration)
-    else {
-      return
-    }
+    let center = NSPoint(x: iconRect.midX, y: iconRect.midY)
+    let radius = min(iconRect.width, iconRect.height) / 2 - 1
+    color.setStroke()
+    color.setFill()
+    let rim = NSBezierPath(
+      ovalIn: NSRect(
+        x: center.x - radius, y: center.y - radius,
+        width: radius * 2, height: radius * 2
+      ))
+    rim.lineWidth = 1
+    rim.stroke()
 
-    let tintedSymbolImage = NSImage(size: iconRect.size, flipped: false) { drawingRect in
-      color.setFill()
-      drawingRect.fill()
-      symbolImage.draw(in: drawingRect, from: .zero, operation: .destinationIn, fraction: 1)
-      return true
+    for degrees in [0.0, 45, 90, 135, 180, 225, 315] {
+      let angle = degrees * .pi / 180
+      let dotRadius: CGFloat = 0.55
+      let dotCenter = NSPoint(
+        x: center.x + cos(angle) * radius * 0.68,
+        y: center.y + sin(angle) * radius * 0.68
+      )
+      NSBezierPath(
+        ovalIn: NSRect(
+          x: dotCenter.x - dotRadius, y: dotCenter.y - dotRadius,
+          width: dotRadius * 2, height: dotRadius * 2
+        )
+      ).fill()
     }
-    tintedSymbolImage.draw(in: iconRect)
+    let needle = NSBezierPath()
+    needle.move(to: center)
+    needle.line(to: NSPoint(x: center.x + radius * 0.4, y: center.y + radius * 0.4))
+    needle.lineWidth = 1
+    needle.lineCapStyle = .round
+    needle.stroke()
+    NSBezierPath(ovalIn: NSRect(x: center.x - 0.85, y: center.y - 0.85, width: 1.7, height: 1.7)).fill()
   }
 
   // 잔여율에 맞는 게이지 그라데이션 반환
