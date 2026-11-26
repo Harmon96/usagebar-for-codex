@@ -1016,7 +1016,9 @@ private struct UsagePopoverView: View {
   @ObservedObject var usageStore: UsageStore
   @StateObject private var analyticsStore = UsageAnalyticsStore()
   @AppStorage("usageGaugeColorHex") private var gaugeColorHex = ""
+  @AppStorage(claudeUsageEnabledPreferenceKey) private var claudeUsageEnabled = false
   @State private var showingColorEditor = false
+  let onSetClaudeUsageEnabled: (Bool) -> Void
   let onToggleLaunchAtLogin: () -> Void
   let onOpenDashboard: () -> Void
   let onQuit: () -> Void
@@ -1261,6 +1263,9 @@ private struct UsagePopoverView: View {
         .frame(width: 104)
       }
 
+      Toggle("Claude 사용량 표시", isOn: $claudeUsageEnabled)
+        .onChange(of: claudeUsageEnabled) { _, enabled in onSetClaudeUsageEnabled(enabled) }
+
       Button(action: onToggleLaunchAtLogin) {
         HStack {
           Label("로그인 시 자동 실행", systemImage: "power")
@@ -1338,6 +1343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let usageStore = UsageStore()
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let usagePopover = NSPopover()
+  private let claudeMenu = ClaudeUsageMenu()
   private var gaugeStateCancellable: AnyCancellable?
   private var appearanceObservation: NSKeyValueObservation?
 
@@ -1348,6 +1354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     observeUsageStore()
     configureSystemObservers()
     updateLaunchAtLoginState()
+    claudeMenu.setEnabled(UserDefaults.standard.bool(forKey: claudeUsageEnabledPreferenceKey))
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -1384,6 +1391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     usagePopover.contentViewController = NSHostingController(
       rootView: UsagePopoverView(
         usageStore: usageStore,
+        onSetClaudeUsageEnabled: { [weak self] in self?.claudeMenu.setEnabled($0) },
         onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
         onOpenDashboard: { NSWorkspace.shared.open(usageDashboardURL) },
         onQuit: { NSApp.terminate(nil) }
@@ -1541,6 +1549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // 잠자기 복귀 후 마지막 값을 stale로 표시하고 즉시 갱신
   @objc private func handleDidWake() {
     usageStore.refreshAfterWake()
+    claudeMenu.refresh()
   }
 
   // 디스플레이 재구성 후 메뉴바 항목 가시성 복구
@@ -1589,6 +1598,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
+enum UsageBarEntryPoint {
+  @MainActor
+  static func main() {
+    if CommandLine.arguments.dropFirst().first == "--capture-claude-usage" {
+      do {
+        try ClaudeUsageSnapshot.captureStatusLine()
+      } catch {
+        FileHandle.standardError.write(Data("UsageBar could not save Claude usage.\n".utf8))
+        exit(EXIT_FAILURE)
+      }
+      return
+    }
+
+    CodexUsageMenuBarApp.main()
+  }
+}
+
 struct CodexUsageMenuBarApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
