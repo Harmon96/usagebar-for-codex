@@ -19,7 +19,8 @@ struct ClaudeUsageSnapshotTests {
       """.utf8
     )
 
-    let snapshot = try #require(ClaudeUsageSnapshot.parse(input, receivedAt: receivedAt))
+    let parsed = try ClaudeUsageSnapshot.parse(input, receivedAt: receivedAt)
+    let snapshot = try #require(parsed)
     #expect(snapshot.fiveHour?.remainingPercentage == 76)
     #expect(snapshot.sevenDay?.remainingPercentage == 58)
     #expect(snapshot.receivedAt == receivedAt)
@@ -42,7 +43,8 @@ struct ClaudeUsageSnapshotTests {
                        "seven_day":{"used_percentage":0,"resets_at":3000}}}
       """.utf8
     )
-    let snapshot = try #require(ClaudeUsageSnapshot.parse(input, receivedAt: receivedAt))
+    let parsed = try ClaudeUsageSnapshot.parse(input, receivedAt: receivedAt)
+    let snapshot = try #require(parsed)
     #expect(snapshot.fiveHour == nil)
     #expect(snapshot.sevenDay?.remainingPercentage == 100)
 
