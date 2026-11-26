@@ -7,20 +7,18 @@
 
 ![UsageBar 상세 화면](./image-1.png)
 
-UsageBar는 설치된 Codex CLI의 잔여 사용률을 macOS 메뉴바에 표시하는 경량 네이티브 앱입니다. 작업 흐름을 끊고 사용량 페이지를 열지 않아도 게이지, 잔여 퍼센트, 리셋 시각과 사용 속도를 바로 확인할 수 있습니다.
+UsageBar는 Codex와 Claude Code의 구독 잔여율을 macOS 메뉴바에 표시합니다. Codex의 사용 속도와 토큰 사용 기록을 확인할 수 있고, Claude Code를 연결하면 5시간·주간 잔여율과 리셋 시각을 별도 메뉴에서 볼 수 있습니다. [Claude Code 연결 방법](#claude-code-사용량-추가)
 
 > [!IMPORTANT]
-> UsageBar는 OpenAI와 제휴하거나 OpenAI가 승인·후원한 공식 제품이 아닙니다. OpenAI와 Codex는 각 권리자의 상표이며, 이 저장소에는 OpenAI 로고 자산이 포함되지 않습니다.
+> UsageBar는 OpenAI 또는 Anthropic의 공식 제품이 아닙니다. OpenAI, Codex, Anthropic, Claude는 각 권리자의 상표이며, 이 저장소에는 OpenAI 로고 자산이 포함되지 않습니다.
 
 ## 프로젝트 배경
 
-Codex를 장시간 사용할 때는 “얼마나 남았는지”뿐 아니라 현재 소비 속도가 주간 리셋 주기보다 빠른지도 중요합니다. UsageBar는 다음 세 가지 원칙으로 이 문제를 해결합니다.
-
-- **Glanceable UI**: 메뉴바에서 게이지와 숫자를 즉시 읽고, 클릭 한 번으로 상세 정보를 확인합니다.
-- **Local first**: 별도 서버나 API 키 없이 로컬 Codex CLI의 기존 로그인 상태를 사용합니다.
-- **Resilient state**: 일시적인 조회 실패가 발생해도 마지막 정상 값을 유지하고 오래된 데이터임을 명확히 표시합니다.
+사용량 페이지를 매번 열지 않고 남은 한도와 다음 리셋 시각을 확인하기 위해 만들었습니다. Codex는 로컬 CLI의 로그인 상태를 사용하고, Claude Code는 상태줄에서 데이터를 받아옵니다.
 
 ## 주요 기능
+
+### Codex
 
 - 주간 잔여율을 우선 표시하고, 주간 창이 없으면 5시간 등 응답에 있는 기간으로 전환
 - 선택된 기간의 잔여율을 `게이지 + %`, `게이지만`, `%만` 중 하나로 표시
@@ -30,10 +28,53 @@ Codex를 장시간 사용할 때는 “얼마나 남았는지”뿐 아니라 �
 - 선택된 기간의 리셋 시각, 소비 속도, 리셋 크레딧, 플랜 및 CLI 버전 표시
 - 모델별로 가장 많이 소진된 제한의 기간과 잔여율 표시
 - 최초 조회 전에는 `확인 중`, 정상 값 없이 조회에 실패하면 `조회 실패` 표시
-- 사용자가 명시적으로 켠 경우에만 macOS 로그인 항목 등록
-- 라이트/다크 모드와 디스플레이 구성 변경에 맞춰 메뉴바 항목 다시 렌더링
+- 라이트/다크 모드와 디스플레이 구성 변경에 맞춰 메뉴바 게이지 다시 렌더링
 
-## 사용 기록과 그래프
+### Claude Code
+
+- **Claude 사용량 표시**를 켜면 메뉴바에 별도 항목 추가
+- 메뉴바에는 주간 잔여율을 표시하고, 주간 값이 없으면 5시간 잔여율 표시
+- 상세 메뉴에서 두 기간의 잔여율·리셋 시각과 마지막 수신 시각 표시
+
+macOS 로그인 시 자동 실행은 설정에서 켤 수 있습니다.
+
+## Claude Code 사용량 추가
+
+Claude Code의 Pro·Max·Ultra 구독을 사용하고 있다면 아래 순서로 연결할 수 있습니다. [Claude Code 상태줄 문서](https://code.claude.com/docs/en/statusline)
+
+1. [빌드 및 실행](#빌드-및-실행) 단계에 따라 UsageBar를 엽니다.
+2. Codex 메뉴바 항목을 클릭하고 **Claude 사용량 표시**를 켭니다.
+3. 새로 나타난 **Claude —** 메뉴에서 **상태줄 명령 복사**를 누릅니다.
+4. Claude Code 사용자 설정 파일 `~/.claude/settings.json`에 아래 예시처럼 `statusLine`을 추가합니다. `command` 값에는 복사한 명령을 넣고, 기존 설정이 있다면 같은 JSON 객체 안에 추가합니다.
+5. Claude Code에서 응답을 한 번 받습니다. UsageBar는 상태줄이 보낸 값을 15초 이내에 표시합니다. 메뉴를 열면 즉시 확인합니다.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "'/path/to/CodexUsageMenuBar.app/Contents/MacOS/CodexUsageMenuBar' --capture-claude-usage"
+  }
+}
+```
+
+### 기존 상태줄을 유지하는 방법
+
+이미 상태줄 스크립트를 쓰고 있다면, 아래처럼 JSON 입력을 UsageBar와 기존 스크립트에 각각 전달하는 래퍼를 사용하세요. 이 예시를 `~/.claude/usagebar-statusline.sh`에 저장한 뒤 앱 경로와 기존 스크립트 경로를 바꾸고, `statusLine.command`를 `/bin/bash ~/.claude/usagebar-statusline.sh`로 지정하면 기존 스크립트의 출력이 계속 표시됩니다.
+
+```bash
+#!/bin/bash
+input="$(cat)"
+printf '%s' "$input" | '/path/to/CodexUsageMenuBar.app/Contents/MacOS/CodexUsageMenuBar' --capture-claude-usage
+printf '%s' "$input" | /bin/bash "$HOME/.claude/statusline.sh"
+```
+
+### 갱신과 연결 해제
+
+Claude Code가 사용량을 보내면 UsageBar가 마지막 수신 시각을 갱신합니다. 리셋 시각을 지난 값은 숨기고 새 데이터를 기다립니다. 앱을 옮긴 뒤에는 상태줄 명령을 다시 복사해 경로를 갱신하세요.
+
+메뉴바에서 숨기려면 **Claude 사용량 표시**를 끕니다. 데이터 수집까지 중단하려면 Claude Code 설정에서 UsageBar 명령을 빼거나 이전 상태줄 설정을 복원합니다.
+
+## Codex 사용 기록과 그래프
 
 메뉴바 팝오버에 바로 표시되는 그래프에서 `1h`, `6h`, `1d`, `7d`, `30d` 기간을 선택합니다. 시간대별 일반 입력·캐시 입력·출력 토큰 그래프와 모델별 사용 기록, 입력·출력 및 추론 강도별 토큰 합계를 볼 수 있습니다.
 
@@ -45,11 +86,11 @@ Codex를 장시간 사용할 때는 “얼마나 남았는지”뿐 아니라 �
 
 | 영역 | 구현 |
 | --- | --- |
-| 데이터 연동 | `codex app-server --stdio`를 실행하고 JSONL 기반 `account/rateLimits/read` 응답을 구조적으로 해석 |
+| 데이터 연동 | Codex는 `codex app-server --stdio`의 `account/rateLimits/read` 응답을 읽고, Claude Code는 상태줄의 `rate_limits`를 받아 사용 |
 | 상태 관리 | `@MainActor` 저장소와 Combine으로 메뉴바, popover, 캐시 상태를 일관되게 동기화 |
-| 장애 대응 | 마지막 정상 스냅샷 보존, stale 표시, 제한된 타임아웃, 30초·2분·5분 단계 재시도 |
+| 장애 대응 | Codex는 마지막 정상 값을 보존하고 실패 시 재시도. Claude Code의 캐시는 정상 수신 시 갱신하고 기간별로 만료 |
 | macOS 통합 | AppKit `NSStatusItem`, SwiftUI popover, `SMAppService` 로그인 항목, wake/display 알림 처리 |
-| 로컬 저장 | 민감한 인증 정보가 아닌 UI 설정과 마지막 정상 사용량만 `UserDefaults`에 저장 |
+| 로컬 저장 | UI 설정과 Codex 사용량은 `UserDefaults`에, Claude Code 요약 값은 Application Support에 저장 |
 | 품질 관리 | SwiftPM, Swift Testing 회귀 테스트, `swift-format`, GitHub Actions 빌드 검증 |
 
 외부 패키지 의존성 없이 Apple 프레임워크만 사용합니다.
@@ -68,9 +109,12 @@ flowchart LR
   Cache --> Store
   Store --> StatusItem[NSStatusItem Gauge]
   Store --> Popover[SwiftUI Popover]
+  Claude[Claude Code statusLine] --> Capture[UsageBar capture command]
+  Capture --> ClaudeCache[(Local JSON snapshot)]
+  ClaudeCache --> ClaudeMenu[Claude menu item and popover]
 ```
 
-조회 흐름은 다음과 같습니다.
+Codex의 사용량 조회 순서입니다.
 
 1. 일반적인 설치 경로와 현재 `PATH`에서 실행 가능한 `codex`를 찾습니다.
 2. `codex app-server --stdio`를 하위 프로세스로 실행합니다.
@@ -94,7 +138,8 @@ Codex app-server 계약은 [OpenAI Codex app-server 문서](https://github.com/o
 
 - macOS 15 이상
 - Swift 6.2 이상
-- 설치 및 로그인된 [Codex CLI](https://github.com/openai/codex)
+- Codex 사용량을 표시하려면 설치 및 로그인된 [Codex CLI](https://github.com/openai/codex)
+- Claude 사용량을 표시하려면 구독 한도를 상태줄에 전달하는 [Claude Code](https://code.claude.com/docs/en/statusline)와 Pro·Max·Ultra 계정
 
 앱은 `~/.hermes/node/bin`, `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`과 현재 프로세스의 `PATH`에서 `codex` 실행 파일을 찾습니다.
 
@@ -119,7 +164,7 @@ swift test
 zsh ./scripts/build-app.sh
 ```
 
-GitHub Actions는 macOS runner에서 형식 검사, 단위 테스트와 실제 `.app` 번들 빌드를 모두 실행합니다. 단위 테스트는 JSON-RPC 응답 선택, CLI 버전 파싱, 기간별 창 선택, 모델별 제한, 초기·오류·캐시 상태와 사용 속도 계산의 핵심 분기를 검증합니다.
+GitHub Actions는 macOS runner에서 형식 검사, 단위 테스트와 실제 `.app` 번들 빌드를 모두 실행합니다. 단위 테스트는 JSON-RPC 응답 선택, CLI 버전 파싱, 기간별 창 선택, 모델별 제한, 초기·오류·캐시 상태, 사용 속도 계산을 검증합니다. Claude Code의 상태줄 파싱, 리셋 시 만료, 캐시에서 세션 ID가 제외되는 동작도 확인합니다.
 
 ## 프로젝트 구조
 
@@ -127,7 +172,10 @@ GitHub Actions는 macOS runner에서 형식 검사, 단위 테스트와 실제 `
 .
 ├── .github/workflows/ci.yml           # macOS CI
 ├── Resources/Info.plist               # 앱 번들 메타데이터
-├── Sources/CodexUsageMenuBar/CodexUsageMenuBarApp.swift
+├── Sources/CodexUsageMenuBar/
+│   ├── CodexUsageMenuBarApp.swift     # 앱 진입점, Codex 조회 및 메뉴
+│   ├── ClaudeUsageSnapshot.swift    # 상태줄 입력과 로컬 캐시
+│   └── ClaudeUsageMenu.swift        # Claude 메뉴바 항목과 상세 화면
 ├── Tests/CodexUsageMenuBarTests/      # 파싱·계산 회귀 테스트
 ├── scripts/build-app.sh               # 릴리스 앱 번들 생성·서명·검증
 ├── Package.swift
@@ -139,20 +187,28 @@ GitHub Actions는 macOS runner에서 형식 검사, 단위 테스트와 실제 `
 ## 개인정보 및 로컬 데이터
 
 - 앱 자체 telemetry, analytics, 광고 SDK 또는 원격 로그 전송은 없습니다.
-- UsageBar 자체는 외부 API에 직접 요청하지 않습니다. 설치된 Codex CLI가 기존 로그인 상태를 사용해 필요한 통신을 담당합니다.
+- UsageBar 자체는 외부 API에 직접 요청하지 않습니다. Codex CLI는 기존 로그인 상태로 사용량을 조회하며, Claude Code는 상태줄 입력으로 사용량을 전달합니다.
+- Claude 연동은 두 기간의 사용률·리셋 시각과 마지막 수신 시각만 로컬 Application Support에 저장합니다.
 - Codex 인증 파일, 브라우저 쿠키, Keychain 항목 또는 API 키를 직접 조회하거나 자체 저장하지 않습니다.
 - 원본 app-server 응답은 디스크에 기록하지 않습니다.
 - Codex 하위 프로세스에는 현재 프로세스 환경이 전달되므로 공식 Codex CLI를 신뢰할 수 있는 경로에 설치해 사용해야 합니다.
 - 마지막 정상 잔여율과 해당 기간, 리셋 시각, 사용 속도, 플랜, CLI 버전, 리셋 크레딧, 모델별 제한과 UI 설정만 macOS `UserDefaults`에 로컬 캐시합니다.
-- `Usage 열기`를 누를 때만 기본 브라우저로 Codex 사용량 페이지를 엽니다.
+- `Usage 열기`를 누르면 해당 서비스의 사용량 페이지가 기본 브라우저에서 열립니다.
 
-앱을 종료하고 로그인 시 자동 실행을 먼저 끈 뒤, 로컬 설정과 캐시를 초기화하려면 다음 명령을 사용할 수 있습니다.
+앱을 종료하고 로그인 시 자동 실행을 먼저 끈 뒤, UI 설정과 Codex 캐시를 초기화하려면 다음 명령을 사용하세요.
 
 ```sh
 defaults delete app.usagebar.menubar
 ```
 
+Claude 캐시만 비우려면 Claude Code 설정에서 UsageBar 명령을 먼저 뺀 뒤 `~/Library/Application Support/app.usagebar.menubar/claude-usage.json`을 지웁니다.
+
 ## 문제 해결
+
+### Claude 메뉴가 계속 대기 중으로 표시됨
+
+- 구독 플랜을 확인한 뒤 Claude Code에서 응답을 받아 보세요. 각 한도는 독립적으로 들어오며, 한도가 리셋된 직후에는 새 값이 필요할 수 있습니다.
+- `statusLine.command`에 복사한 앱 경로가 들어 있는지 확인하세요. 기존 상태줄을 유지 중이라면 래퍼가 Claude Code의 표준 입력을 UsageBar로도 전달하는지 확인하세요.
 
 ### Codex CLI를 찾을 수 없음
 
