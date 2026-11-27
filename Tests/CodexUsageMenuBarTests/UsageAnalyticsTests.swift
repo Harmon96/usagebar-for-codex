@@ -123,6 +123,26 @@ struct UsageAnalyticsTests {
     #expect(parser.records.map(\.inputTokens).reduce(0, +) == 300)
   }
 
+  @Test("A cached Codex file becomes creditable when its newest record arrives")
+  func warmCollectionCacheRevisitsFutureRecord() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let timestamp = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970) - 5)
+    let row = try JSONSerialization.data(withJSONObject: [
+      "type": "token_usage_record",
+      "timestamp": ISO8601DateFormatter().string(from: timestamp),
+      "payload": ["response_id": "warm-cache", "usage": usage(100, 20)],
+    ])
+    try row.write(to: directory.appending(path: "rollout-fixture.jsonl"))
+    let since = timestamp.addingTimeInterval(-60)
+    let before = await UsageAnalyticsLoader.loadForCats(
+      roots: [directory], since: since, now: timestamp.addingTimeInterval(-1))
+    #expect(before.samples.isEmpty)
+    let after = await UsageAnalyticsLoader.loadForCats(roots: [directory], since: since, now: timestamp)
+    #expect(after.samples.map(\.tokens) == [120])
+  }
+
   private func usage(_ input: Int, _ output: Int) -> [String: Int] {
     ["input_tokens": input, "cached_input_tokens": 80, "output_tokens": output, "reasoning_output_tokens": 5]
   }

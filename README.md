@@ -38,6 +38,21 @@ UsageBar는 Codex와 Claude Code의 구독 잔여율을 macOS 메뉴바에 표�
 
 macOS 로그인 시 자동 실행은 설정에서 켤 수 있습니다.
 
+## 고양이 수집
+
+Codex 메뉴에서 **고양이 수집 시작**을 누르면, 그때부터 집계한 로컬 토큰으로 상자에서 새끼를 만나고 성묘로 키웁니다. 고양이가 정착하면 다음 상자가 나타납니다. 도감에는 생활 고양이 12종, [TICA 2026년 6월 Championship 목록](https://tica.org/wp-content/uploads/2026/06/Standing-Rules-Version-C-3-June-2026.pdf)의 품종 82종과 판타지 고양이 8종이 있습니다. 도감에서 대표 고양이를 고정하면 메뉴바와 바탕화면에 표시할 수 있습니다.
+
+- **사용량**에서 원래 Codex 상세와 추적 도구별 합계, 활동 달력, 회고를 볼 수 있습니다.
+- **가방과 상점**에서 토큰으로 쌓은 코인으로 간식, 장난감, 반짝 부적, 등급별 상자를 구입하고 사용할 수 있습니다.
+- **설정**에서 성장과 가격, 메뉴바 표시, 추적 도구와 추가 폴더를 고릅니다. 바탕화면 고양이는 우클릭 메뉴에서 크기와 애니메이션을 설정할 수 있습니다.
+- **저장과 복원**은 설정에서 합니다. 수집 기록은 `~/Library/Application Support/app.usagebar.menubar/cats/` 아래에 저장되며 백업에는 성장, 도감, 코인, 가방과 중복 적립 방지 기록이 함께 들어갑니다.
+
+추적 도구는 Codex, Claude Code, Gemini CLI, Antigravity, OpenCode, Hermes Agent, Cursor, Grok Build CLI, Copilot CLI, Kiro CLI, Pi Agent, omp, omo, Aside, Kimi Code, Devin CLI입니다. Cursor는 로컬에 남은 토큰만 집계하며 Kiro는 로컬 기록의 바이트 길이로 추정합니다. Codex와 Claude Code의 5시간·주간 한도 보상에는 기존 app-server와 상태줄을 사용합니다. 고양이 카탈로그와 픽셀 그림은 앱에 포함되며 도감은 오프라인에서도 열립니다.
+
+바탕화면 고양이에게 외부 도구의 상태를 표시하려면 해당 도구에서 `harmon-usagebar://agent?state=working&label=Codex`와 같은 주소를 엽니다. 상태는 `working`, `waiting`, `done`, `idle`이며, `label`과 `message`는 URL 인코딩해 전달합니다.
+
+수집 흐름과 로컬 사용량 파서 일부는 [PokeTokenBar](https://github.com/chattymin/PokeTokenBar)를 참고했습니다. 이식한 코드의 라이선스는 [외부 코드 고지](./THIRD_PARTY_NOTICES.md)에 있습니다.
+
 ## Claude Code 사용량 추가
 
 Claude Code의 Pro·Max·Ultra 구독을 사용하고 있다면 아래 순서로 연결할 수 있습니다. [Claude Code 상태줄 문서](https://code.claude.com/docs/en/statusline)

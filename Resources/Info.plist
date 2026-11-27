@@ -18,6 +18,17 @@
   <string>1.0.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>app.usagebar.menubar.agent</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>harmon-usagebar</string>
+      </array>
+    </dict>
+  </array>
   <key>LSMinimumSystemVersion</key>
   <string>15.0</string>
   <key>LSUIElement</key>
