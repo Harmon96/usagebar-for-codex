@@ -16,9 +16,10 @@ trap cleanup EXIT
 cd "${project_directory}"
 swift build --configuration release
 
-mkdir -p "${staged_app_directory}/Contents/MacOS"
+mkdir -p "${staged_app_directory}/Contents/MacOS" "${staged_app_directory}/Contents/Resources"
 cp "${build_directory}/CodexUsageMenuBar" "${staged_app_directory}/Contents/MacOS/CodexUsageMenuBar"
 cp "${project_directory}/Resources/Info.plist" "${staged_app_directory}/Contents/Info.plist"
+cp "${project_directory}/THIRD_PARTY_NOTICES.md" "${staged_app_directory}/Contents/Resources/"
 
 plutil -lint "${staged_app_directory}/Contents/Info.plist" >/dev/null
 codesign --force --sign - "${staged_app_directory}"

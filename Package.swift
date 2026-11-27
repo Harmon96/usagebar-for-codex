@@ -12,7 +12,8 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
-      name: "CodexUsageMenuBar"
+      name: "CodexUsageMenuBar",
+      linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .testTarget(
       name: "CodexUsageMenuBarTests",

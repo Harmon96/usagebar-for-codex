@@ -8,6 +8,7 @@ struct UsageAnalyticsRecord: Sendable {
   let outputTokens: Int
   let reasoningTokens: Int
   let reasoningEffort: String?
+  let growthKey: String
 }
 
 struct UsageAnalyticsResult: Sendable {
@@ -26,16 +27,87 @@ enum UsageAnalyticsLoader {
   }
 
   static func load(directory: URL, now: Date = Date()) throws -> UsageAnalyticsResult {
-    let cutoff = now.addingTimeInterval(-30 * 24 * 60 * 60)
+    try load(roots: sessionRoots(directory), since: now.addingTimeInterval(-30 * 24 * 60 * 60), now: now)
+  }
+
+  private static func sessionRoots(_ directory: URL) -> [URL] {
+    ["sessions", "archived_sessions"].map { directory.appendingPathComponent($0) }
+  }
+
+  private static let collectionCache = CollectionUsageCache()
+
+  static func loadForCats(extra: [URL], since: Date, now: Date) async -> CatUsageBatch {
+    let home = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".codex")
+    let configured = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+    let locations = Array(Set(sessionRoots(home) + (configured.map(sessionRoots) ?? []) + extra))
+    return await loadForCats(roots: locations, since: since, now: now)
+  }
+
+  static func loadForCats(roots: [URL], since: Date, now: Date) async -> CatUsageBatch {
+    do {
+      let result = try await collectionCache.load(roots: roots, since: since, now: now)
+      // A modern per-request series can replace a previously observed legacy turn.
+      // Credit the turn total so that switching formats cannot grant it twice.
+      let byTurn = Dictionary(grouping: result.records, by: \.growthKey)
+      let samples = byTurn.compactMap { key, records -> CatUsageSample? in
+        guard let date = records.last?.timestamp else { return nil }
+        let tokens = records.reduce(Int64(0)) {
+          $0 + Int64(clamping: min($1.inputTokens, 100_000_000_000))
+            + Int64(clamping: min($1.outputTokens, 100_000_000_000))
+        }
+        return CatUsageSample(id: key, date: date, tokens: tokens)
+      }
+      let omitted = result.skippedFiles + result.unsupportedFiles
+      let status = omitted > 0 ? "읽지 못한 기록 파일 \(omitted)개" : (samples.isEmpty ? "새 기록 대기 중" : nil)
+      return CatUsageBatch(samples: samples, status: status)
+    } catch {
+      return CatUsageBatch(samples: [], status: "Codex 기록을 읽지 못했습니다.")
+    }
+  }
+
+  private struct FileEntry {
+    let modified: Date
+    let size: Int
+    let identifier: NSObject
+    let parser: UsageAnalyticsParser
+  }
+
+  private actor CollectionUsageCache {
+    private var cutoff: Date?
+    private var files: [URL: FileEntry] = [:]
+
+    func load(roots: [URL], since: Date, now: Date) throws -> UsageAnalyticsResult {
+      if cutoff != since {
+        files.removeAll()
+        cutoff = since
+      }
+      var entries: [URL: FileEntry]? = files
+      let result = try UsageAnalyticsLoader.load(roots: roots, since: since, now: now, cache: &entries)
+      files = entries ?? [:]
+      return result
+    }
+  }
+
+  private static func load(roots: [URL], since cutoff: Date, now: Date) throws -> UsageAnalyticsResult {
+    var disabledCache: [URL: FileEntry]?
+    return try load(roots: roots, since: cutoff, now: now, cache: &disabledCache)
+  }
+
+  private static func load(
+    roots: [URL], since cutoff: Date, now: Date, cache: inout [URL: FileEntry]?
+  ) throws -> UsageAnalyticsResult {
+    var updatedCache: [URL: FileEntry] = [:]
     var parser = UsageAnalyticsParser(cutoff: cutoff, now: now)
     var skipped = 0
     var unsupported = 0
-    for folder in ["sessions", "archived_sessions"] {
-      let root = directory.appendingPathComponent(folder)
+    let resourceKeys: Set<URLResourceKey> = [
+      .isRegularFileKey, .contentModificationDateKey, .fileSizeKey, .fileResourceIdentifierKey,
+    ]
+    for root in roots.sorted(by: { $0.path < $1.path }) {
       guard FileManager.default.fileExists(atPath: root.path) else { continue }
       guard
         let enumerator = FileManager.default.enumerator(
-          at: root, includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+          at: root, includingPropertiesForKeys: Array(resourceKeys),
           options: [.skipsHiddenFiles],
           errorHandler: { _, _ in
             skipped += 1
@@ -48,7 +120,7 @@ enum UsageAnalyticsLoader {
       }
       for case let url as URL in enumerator {
         try Task.checkCancellation()
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+        guard let values = try? url.resourceValues(forKeys: resourceKeys),
           values.isRegularFile == true
         else { continue }
         if let modified = values.contentModificationDate, modified < cutoff { continue }
@@ -58,34 +130,58 @@ enum UsageAnalyticsLoader {
         }
         guard url.pathExtension == "jsonl" else { continue }
         do {
-          let handle = try FileHandle(forReadingFrom: url)
-          defer { try? handle.close() }
-          parser.beginFile(identity: url.lastPathComponent)
-          let invalidBefore = parser.invalidRecordCount
-          var buffer = Data()
-          var droppingOversizedLine = false
-          while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            try Task.checkCancellation()
-            buffer.append(chunk)
-            while let newline = buffer.firstIndex(of: 10) {
-              let line = buffer[..<newline]
-              if !droppingOversizedLine { parser.consume(Data(line)) }
-              droppingOversizedLine = false
-              buffer.removeSubrange(...newline)
+          if cache != nil, let modified = values.contentModificationDate, let size = values.fileSize,
+            let identifier = values.fileResourceIdentifier as? NSObject
+          {
+            let entry: FileEntry
+            if let saved = cache?[url], saved.modified == modified, saved.size == size,
+              saved.identifier == identifier, FileManager.default.isReadableFile(atPath: url.path),
+              saved.parser.now <= now, saved.parser.nextTimestamp.map({ now < $0 }) ?? true
+            {
+              entry = saved
+            } else {
+              var perFile = UsageAnalyticsParser(cutoff: cutoff, now: now)
+              try readFile(url, into: &perFile)
+              entry = FileEntry(modified: modified, size: size, identifier: identifier, parser: perFile)
             }
-            // Individual conversation lines can be enormous; skip them without retaining their content.
-            if buffer.count > 2 * 1024 * 1024 {
-              buffer.removeAll(keepingCapacity: false)
-              droppingOversizedLine = true
-            }
+            if updatedCache.count < 1_024 { updatedCache[url] = entry }
+            parser.merge(entry.parser)
+            if entry.parser.invalidRecordCount > 0 { skipped += 1 }
+          } else {
+            let invalidBefore = parser.invalidRecordCount
+            try readFile(url, into: &parser)
+            if parser.invalidRecordCount > invalidBefore { skipped += 1 }
           }
-          if !buffer.isEmpty && !droppingOversizedLine { parser.consume(buffer) }
-          if parser.invalidRecordCount > invalidBefore { skipped += 1 }
         } catch is CancellationError { throw CancellationError() } catch { skipped += 1 }
       }
     }
+    if cache != nil { cache = updatedCache }
     return UsageAnalyticsResult(
       records: parser.records, skippedFiles: skipped, unsupportedFiles: unsupported, collectedAt: now)
+  }
+
+  private static func readFile(_ url: URL, into parser: inout UsageAnalyticsParser) throws {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    parser.beginFile(identity: url.lastPathComponent)
+    let limit = 2 * 1024 * 1024
+    var buffer = Data()
+    var droppingOversizedLine = false
+    while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+      try Task.checkCancellation()
+      buffer.append(chunk)
+      while let newline = buffer.firstIndex(of: 10) {
+        let line = buffer[..<newline]
+        if !droppingOversizedLine && line.count <= limit { parser.consume(Data(line)) }
+        droppingOversizedLine = false
+        buffer.removeSubrange(...newline)
+      }
+      if buffer.count > limit {
+        buffer.removeAll(keepingCapacity: false)
+        droppingOversizedLine = true
+      }
+    }
+    if !buffer.isEmpty && !droppingOversizedLine { parser.consume(buffer) }
   }
 }
 
@@ -111,6 +207,7 @@ struct UsageAnalyticsParser {
   private var contexts: [String: (model: String, effort: String?)] = [:]
   private let dateParser = ISO8601DateFormatter()
   private(set) var invalidRecordCount = 0
+  private(set) var nextTimestamp: Date?
 
   init(cutoff: Date, now: Date) {
     self.cutoff = cutoff
@@ -120,6 +217,14 @@ struct UsageAnalyticsParser {
   var records: [UsageAnalyticsRecord] {
     (Array(modern.values) + legacy.values.filter { !modernTurns.contains($0.turn) })
       .map(\.record).sorted { $0.timestamp < $1.timestamp }
+  }
+
+  fileprivate mutating func merge(_ file: UsageAnalyticsParser) {
+    modernTurns.formUnion(file.modernTurns)
+    for (key, candidate) in file.modern where modern[key]?.isOwner != true || candidate.isOwner {
+      modern[key] = candidate
+    }
+    legacy.merge(file.legacy) { _, newer in newer }
   }
 
   mutating func beginFile(identity: String) {
@@ -179,7 +284,6 @@ struct UsageAnalyticsParser {
         invalidRecordCount += 1
         return
       }
-      modernTurns.insert(turnKey)
       usage = measured
       identity = response
     } else {
@@ -198,7 +302,12 @@ struct UsageAnalyticsParser {
       previous = current
       identity = session + ":" + timestamp + ":" + keys.map { String(current[$0, default: 0]) }.joined(separator: ":")
     }
-    guard date >= cutoff, date <= now else { return }
+    guard date >= cutoff else { return }
+    guard date <= now else {
+      nextTimestamp = min(nextTimestamp ?? date, date)
+      return
+    }
+    if isModern { modernTurns.insert(turnKey) }
     guard let measuredInput = usage["input_tokens"] as? Int,
       let measuredOutput = usage["output_tokens"] as? Int
     else {
@@ -215,7 +324,8 @@ struct UsageAnalyticsParser {
       inputTokens: input, cachedInputTokens: min(input, max(0, usage["cached_input_tokens"] as? Int ?? 0)),
       outputTokens: output, reasoningTokens: min(output, max(0, usage["reasoning_output_tokens"] as? Int ?? 0)),
       reasoningEffort: payload["reasoning_effort"] as? String
-        ?? (isOwner ? (contexts[recordTurn]?.effort ?? (recordTurn == turn ? effort : nil)) : nil)
+        ?? (isOwner ? (contexts[recordTurn]?.effort ?? (recordTurn == turn ? effort : nil)) : nil),
+      growthKey: turnKey
     )
     let candidate = Candidate(record: record, turn: turnKey, identity: identity, isOwner: isOwner)
     if isModern {

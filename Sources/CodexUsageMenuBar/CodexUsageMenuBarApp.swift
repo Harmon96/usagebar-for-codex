@@ -163,6 +163,7 @@ struct CodexUsageSnapshot: Sendable {
   let availableResetCredits: Int
   let nearestResetCreditExpiry: Date?
   let modelSpecificLimits: [ModelSpecificLimit]
+  var rewardWindows: [RateLimitWindow] = []
 }
 
 // 프로세스 I/O와 분리해 테스트할 수 있는 app-server 응답 해석
@@ -413,7 +414,9 @@ private enum CodexRateLimitClient {
         .compactMap { $0.expiresAt }
         .min()
         .map { Date(timeIntervalSince1970: TimeInterval($0)) },
-      modelSpecificLimits: RateLimitParser.modelSpecificLimits(from: parsedResponse.rateLimits)
+      modelSpecificLimits: RateLimitParser.modelSpecificLimits(from: parsedResponse.rateLimits),
+      rewardWindows: [parsedResponse.rateLimits.rateLimits.primary, parsedResponse.rateLimits.rateLimits.secondary]
+        .compactMap { $0 }
     )
   }
 
@@ -541,6 +544,8 @@ final class UsageStore: ObservableObject {
     return isStale ? .stale : .live
   }
 
+  var onLiveRateLimits: (([RateLimitWindow], Date) -> Void)?
+
   private var refreshTimer: Timer?
   private var retryTimer: Timer?
   private var retryBackoffPolicy = RetryBackoffPolicy()
@@ -604,6 +609,7 @@ final class UsageStore: ObservableObject {
         self.lastErrorMessage = nil
         self.persistCurrentSnapshot()
         self.scheduleNextRefresh(usageChanged: usageChanged)
+        self.onLiveRateLimits?(usageSnapshot.rewardWindows, self.lastRefreshedAt ?? .now)
       case .failure(let error):
         self.isStale = true
         self.lastErrorMessage = error.localizedDescription
@@ -1015,6 +1021,7 @@ private struct UsageMetricCard: View {
 private struct UsagePopoverView: View {
   @ObservedObject var usageStore: UsageStore
   @StateObject private var analyticsStore = UsageAnalyticsStore()
+  @ObservedObject var catStore: CatCollectionStore
   @AppStorage("usageGaugeColorHex") private var gaugeColorHex = ""
   @AppStorage(claudeUsageEnabledPreferenceKey) private var claudeUsageEnabled = false
   @State private var showingColorEditor = false
@@ -1043,6 +1050,20 @@ private struct UsagePopoverView: View {
   var body: some View {
     VStack(spacing: 13) {
       header
+      if !catStore.enabled {
+        Button("고양이 수집 시작") { catStore.setEnabled(true) }
+          .buttonStyle(.bordered)
+        if let error = catStore.error {
+          Text(error).font(.caption).foregroundStyle(.secondary)
+          Button("고양이 백업 복원") {
+            let panel = NSOpenPanel()
+            panel.message = "UsageBar 고양이 백업을 선택하세요."
+            if panel.runModal() == .OK, let url = panel.url {
+              catStore.restore(from: url)
+            }
+          }
+        }
+      }
       usageCard
 
       HStack(alignment: .top, spacing: 9) {
@@ -1344,6 +1365,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let usagePopover = NSPopover()
   private let claudeMenu = ClaudeUsageMenu()
+  private let catStore = CatCollectionStore()
+  private lazy var catDesktop = CatDesktopController(
+    store: catStore, onOpen: { [weak self] in self?.showUsagePopover() })
+  private var catObservation: AnyCancellable?
+  private var catVisibilityObservation: AnyCancellable?
+  private var catScanTimer: Timer?
+  private var catAnimationTimer: Timer?
+  private var catFrame = 0
   private var gaugeStateCancellable: AnyCancellable?
   private var appearanceObservation: NSKeyValueObservation?
 
@@ -1355,12 +1384,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     configureSystemObservers()
     updateLaunchAtLoginState()
     claudeMenu.setEnabled(UserDefaults.standard.bool(forKey: claudeUsageEnabledPreferenceKey))
+    usageStore.onLiveRateLimits = { [weak self] windows, received in
+      guard let self else { return }
+      for window in windows {
+        guard let period = window.windowDurationMins, let reset = window.resetsAt else { continue }
+        self.catStore.observeLimit(
+          .codex, minutes: period, used: Double(window.usedPercent),
+          resetsAt: Date(timeIntervalSince1970: TimeInterval(reset)), receivedAt: received)
+      }
+    }
+    catObservation = catStore.$state.receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.updateCatAnimation()
+      self?.redrawStatusItem()
+    }
+    catVisibilityObservation = catStore.$state.map(\.enabled).removeDuplicates()
+      .receive(on: RunLoop.main).sink { [weak self] _ in self?.catDesktop.syncVisibility() }
+    catScanTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+      Task { @MainActor in self?.refreshCats() }
+    }
+    refreshCats()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
     NSWorkspace.shared.notificationCenter.removeObserver(self)
     NotificationCenter.default.removeObserver(self)
     appearanceObservation?.invalidate()
+    catScanTimer?.invalidate()
+    catAnimationTimer?.invalidate()
   }
 
   // 게이지와 숫자가 포함된 메뉴바 항목 구성
@@ -1389,12 +1439,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     usagePopover.animates = false
     usagePopover.contentSize = NSSize(width: 344, height: 820)
     usagePopover.contentViewController = NSHostingController(
-      rootView: UsagePopoverView(
-        usageStore: usageStore,
-        onSetClaudeUsageEnabled: { [weak self] in self?.claudeMenu.setEnabled($0) },
-        onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
-        onOpenDashboard: { NSWorkspace.shared.open(usageDashboardURL) },
-        onQuit: { NSApp.terminate(nil) }
+      rootView: CatPopoverRoot(
+        catStore: catStore,
+        usage: AnyView(
+          UsagePopoverView(
+            usageStore: usageStore,
+            catStore: catStore,
+            onSetClaudeUsageEnabled: { [weak self] in self?.claudeMenu.setEnabled($0) },
+            onToggleLaunchAtLogin: { [weak self] in self?.toggleLaunchAtLogin() },
+            onOpenDashboard: { NSWorkspace.shared.open(usageDashboardURL) },
+            onQuit: { NSApp.terminate(nil) }
+          )),
+        onToggleDesktop: { [weak self] in self?.catDesktop.toggle() }
       )
     )
   }
@@ -1431,6 +1487,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let percentageText = remainingPercentage.map { "\($0)%" } ?? "—"
     let staleDescription = isStale && remainingPercentage != nil ? " · 데이터가 오래됨" : ""
+    if catStore.enabled && catStore.state.display != .original {
+      let cat = catStore.displayedCat
+      let kind = cat.flatMap { CatCatalog.kind($0.kindID) }
+      statusButton.image = CatArt.image(
+        kind: kind, coat: cat?.coat ?? 0, adult: catStore.displayedCatIsAdult, shiny: cat?.shiny ?? false,
+        frame: catFrame, size: 16)
+      statusButton.imagePosition = catStore.state.display == .catOnly ? .imageOnly : .imageLeft
+      statusButton.attributedTitle =
+        catStore.state.display == .catOnly
+        ? NSAttributedString(string: "")
+        : makePercentageTitle(remainingPercentage: remainingPercentage, foregroundColor: .white)
+      let name = cat?.name ?? "고양이를 기다리는 중"
+      let percent = Int(100 * catStore.state.progress / catStore.state.target)
+      let growth = catStore.state.active.map { "\($0.name) 성장" } ?? "새 고양이 발견까지"
+      let description = ["\(name)", "\(growth) \(percent)%", "Codex 잔여 \(percentageText)\(staleDescription)"]
+        .joined(separator: " · ")
+      statusButton.toolTip = description
+      statusButton.setAccessibilityLabel(description)
+      return
+    }
     statusButton.effectiveAppearance.performAsCurrentDrawingAppearance {
       switch displayMode {
       case .full:
@@ -1532,24 +1608,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   // 메뉴바 클릭 시 사용량 상세 popover 표시 전환
   @objc private func handleStatusItemClick() {
-    guard let statusButton = statusItem.button else {
-      return
-    }
-    if usagePopover.isShown {
+    if let event = NSApp.currentEvent, catStore.enabled,
+      event.type == .rightMouseUp || event.modifierFlags.contains(.control)
+    {
+      showCatMenu()
+    } else if usagePopover.isShown {
       usagePopover.performClose(nil)
-      return
+    } else {
+      showUsagePopover()
     }
-    if usageStore.shouldRefreshOnMenuOpen {
-      usageStore.refreshUsage()
-    }
+  }
+
+  private func showUsagePopover() {
+    guard let statusButton = statusItem.button, !usagePopover.isShown else { return }
+    if usageStore.shouldRefreshOnMenuOpen { usageStore.refreshUsage() }
+    refreshCats()
     NSApp.activate(ignoringOtherApps: true)
     usagePopover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+  }
+
+  private func showCatMenu() {
+    let menu = NSMenu()
+    for (title, action) in [
+      ("UsageBar 열기", #selector(revealPopover)),
+      ("새로고침", #selector(refreshFromMenu)),
+      ("바탕화면 고양이 켜기/끄기", #selector(toggleCatDesktop)),
+      ("종료", #selector(quitFromMenu)),
+    ] {
+      let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+      item.target = self
+    }
+    if let button = statusItem.button {
+      menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+    }
+  }
+
+  @objc private func revealPopover() { showUsagePopover() }
+  @objc private func refreshFromMenu() {
+    usageStore.refreshUsage()
+    refreshCats(force: true)
+  }
+  @objc private func toggleCatDesktop() { catDesktop.toggle() }
+  @objc private func quitFromMenu() { NSApp.terminate(nil) }
+
+  private func updateCatAnimation() {
+    guard catStore.enabled, catStore.state.display != .original else {
+      catAnimationTimer?.invalidate()
+      catAnimationTimer = nil
+      catFrame = 0
+      return
+    }
+    guard catAnimationTimer == nil else { return }
+    catAnimationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+      Task { @MainActor in
+        guard let self else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+          if self.catFrame == 0 { return }
+          self.catFrame = 0
+        } else {
+          self.catFrame = (self.catFrame + 1) % 12
+        }
+        self.redrawStatusItem()
+      }
+    }
+  }
+
+  private func refreshCats(force: Bool = false) {
+    guard catStore.enabled else { return }
+    catStore.refresh(force: force)
+    guard catStore.state.providers.contains(.claude), let snapshot = ClaudeUsageSnapshot.readCache() else { return }
+    for (period, window) in [(300, snapshot.fiveHour), (10080, snapshot.sevenDay)] {
+      guard let window else { continue }
+      catStore.observeLimit(
+        .claude, minutes: period, used: window.usedPercentage, resetsAt: window.resetDate,
+        receivedAt: snapshot.receivedAt)
+    }
+  }
+
+  func application(_ application: NSApplication, open urls: [URL]) {
+    guard catStore.enabled else { return }
+    for url in urls where url.scheme == "harmon-usagebar" && url.host == "agent" {
+      catDesktop.handleActivity(url)
+    }
   }
 
   // 잠자기 복귀 후 마지막 값을 stale로 표시하고 즉시 갱신
   @objc private func handleDidWake() {
     usageStore.refreshAfterWake()
     claudeMenu.refresh()
+    refreshCats(force: true)
   }
 
   // 디스플레이 재구성 후 메뉴바 항목 가시성 복구
@@ -1594,6 +1741,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       enabled: launchStatus == .enabled,
       requiresApproval: launchStatus == .requiresApproval
     )
+  }
+}
+
+@MainActor
+private struct CatPopoverRoot: View {
+  @ObservedObject var catStore: CatCollectionStore
+  let usage: AnyView
+  let onToggleDesktop: () -> Void
+
+  var body: some View {
+    if catStore.enabled {
+      CatCollectionShell(store: catStore, usage: usage, onToggleDesktop: onToggleDesktop)
+    } else {
+      usage
+    }
   }
 }
 
